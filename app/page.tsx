@@ -15,6 +15,7 @@ const HL_WS = "wss://api.hyperliquid.xyz/ws";
 interface Market {
   coin: string;
   coinId: string;
+  dex?: string;
   marketType: "perp" | "spot" | "tradfi";
   price: number;
   prevDayPx: number;
@@ -60,10 +61,10 @@ function fmtChartValue(v: number): string {
 }
 
 function fmtDateTime(d: Date): string {
-  const DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+  const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const MONTHS = [
-    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
   ];
   const h = d.getHours();
   const ampm = h >= 12 ? "PM" : "AM";
@@ -83,6 +84,13 @@ function toCandle(c: HLCandle): CandlePoint {
   };
 }
 
+/** Parse a coinId like "xyz:SILVER" → { apiCoin: "SILVER", dex: "xyz" } */
+function parseCoinId(coinId: string): { apiCoin: string; dex: string | undefined } {
+  const m = /^([^@][^:]+):(.+)$/.exec(coinId);
+  if (m) return { dex: m[1], apiCoin: m[2] };
+  return { dex: undefined, apiCoin: coinId };
+}
+
 export default function Page() {
   const [now, setNow] = useState(() => new Date());
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -91,11 +99,15 @@ export default function Page() {
   const [liveCandle, setLiveCandle] = useState<CandlePoint | undefined>();
   const [ticks, setTicks] = useState<LivelinePoint[]>([]);
   const [latestTick, setLatestTick] = useState(0);
-  const [lineMode, setLineMode] = useState(false);
+  const [lineMode, setLineMode] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [screenWidth, setScreenWidth] = useState(
+    typeof window !== "undefined" ? window.innerWidth : 1400
+  );
 
   const wsRef = useRef<WebSocket | null>(null);
   const selectedCoinRef = useRef("");
+  const selectedApiCoinRef = useRef("");
   const liveCandleRef = useRef<CandlePoint | undefined>(undefined);
   const prevCandleTimeRef = useRef(0);
 
@@ -103,6 +115,13 @@ export default function Page() {
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
+  }, []);
+
+  // Screen width tracking
+  useEffect(() => {
+    const handler = () => setScreenWidth(window.innerWidth);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
   }, []);
 
   // Fetch top markets on mount (perps + spot combined)
@@ -164,9 +183,11 @@ export default function Page() {
         const ctx = ctxs[i];
         const price = parseFloat(ctx.markPx);
         const prev = parseFloat(ctx.prevDayPx);
+        // asset.name already contains the "xyz:" prefix (e.g. "xyz:SILVER")
         return {
-          coin: asset.name,
-          coinId: `xyz:${asset.name}`,
+          coin: asset.name.replace(/^xyz:/, ""),
+          coinId: asset.name,
+          dex: "xyz",
           marketType: "tradfi",
           price: isNaN(price) ? 0 : price,
           prevDayPx: isNaN(prev) ? 0 : prev,
@@ -190,6 +211,10 @@ export default function Page() {
   useEffect(() => {
     if (!selectedCoin) return;
     selectedCoinRef.current = selectedCoin;
+
+    const { apiCoin, dex } = parseCoinId(selectedCoin);
+    selectedApiCoinRef.current = apiCoin;
+
     setLoading(true);
     setCandles([]);
     setTicks([]);
@@ -202,7 +227,13 @@ export default function Page() {
 
     postInfo<HLCandle[]>({
       type: "candleSnapshot",
-      req: { coin: selectedCoin, interval: "1m", startTime, endTime },
+      req: {
+        coin: apiCoin,
+        interval: "1m",
+        startTime,
+        endTime,
+        ...(dex ? { dex } : {}),
+      },
     }).then((data) => {
       if (!data?.length || selectedCoinRef.current !== selectedCoin) return;
 
@@ -233,6 +264,8 @@ export default function Page() {
       wsRef.current = null;
     }
 
+    const { apiCoin, dex } = parseCoinId(selectedCoin);
+
     const ws = new WebSocket(HL_WS);
     wsRef.current = ws;
 
@@ -243,7 +276,12 @@ export default function Page() {
       ws.send(
         JSON.stringify({
           method: "subscribe",
-          subscription: { type: "candle", coin: selectedCoin, interval: "1m" },
+          subscription: {
+            type: "candle",
+            coin: apiCoin,
+            interval: "1m",
+            ...(dex ? { dex } : {}),
+          },
         })
       );
     };
@@ -274,7 +312,7 @@ export default function Page() {
         // Live candle updates
         if (msg.channel === "candle" && msg.data) {
           const c = msg.data as HLCandle & { s: string };
-          if (c.s !== selectedCoinRef.current) return;
+          if (c.s !== selectedApiCoinRef.current) return;
 
           const pt = toCandle(c);
           const nowTime = pt.time;
@@ -315,6 +353,9 @@ export default function Page() {
   const accentColor =
     selectedMarket && selectedMarket.change24h < 0 ? "#dc2626" : "#16a34a";
 
+  // Responsive breakpoint: hide sidebar below 1100px
+  const isNarrow = screenWidth < 1100;
+
   return (
     <div
       style={{
@@ -329,7 +370,7 @@ export default function Page() {
       <div
         style={{
           padding: "16px 24px 8px",
-          fontWeight: "bold",
+          fontWeight: "normal",
           fontSize: "13px",
           letterSpacing: "0.04em",
           color: "#111",
@@ -349,121 +390,96 @@ export default function Page() {
           minHeight: 0,
         }}
       >
-        {/* Sidebar */}
-        <div
-          style={{
-            width: 260,
-            flexShrink: 0,
-            padding: "8px 0 24px 24px",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
+        {/* Sidebar — hidden on narrow screens */}
+        {!isNarrow && (
           <div
             style={{
-              fontWeight: "bold",
-              fontSize: "13px",
-              marginBottom: 10,
-              color: "#111",
+              width: 260,
+              flexShrink: 0,
+              padding: "8px 0 24px 24px",
+              display: "flex",
+              flexDirection: "column",
             }}
           >
-            Top Markets on Hyperliquid
-          </div>
+            <div
+              style={{
+                fontWeight: "bold",
+                fontSize: "13px",
+                marginBottom: 10,
+                color: "#111",
+              }}
+            >
+              Top Markets on Hyperliquid
+            </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {markets.map((m) => (
-              <div
-                key={m.coinId}
-                onClick={() => setSelectedCoin(m.coinId)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  fontSize: "13px",
-                  cursor: "pointer",
-                  borderRadius: 4,
-                  padding: "4px 8px",
-                  backgroundColor:
-                    m.coinId === selectedCoin ? "#f3f4f6" : "transparent",
-                  transition: "background-color 0.1s",
-                  gap: 4,
-                  userSelect: "none",
-                }}
-                onMouseEnter={(e) => {
-                  if (m.coinId !== selectedCoin)
-                    (e.currentTarget as HTMLDivElement).style.backgroundColor =
-                      "#f9fafb";
-                }}
-                onMouseLeave={(e) => {
-                  if (m.coinId !== selectedCoin)
-                    (e.currentTarget as HTMLDivElement).style.backgroundColor =
-                      "transparent";
-                }}
-              >
-                <span
-                  style={{
-                    fontWeight: 600,
-                    width: 90,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    color: "#111",
-                    fontSize: "12px",
-                  }}
-                >
-                  {m.marketType === "spot" ? m.coin : `${m.coin}-USD`}
-                </span>
-                <span
-                  style={{
-                    fontSize: "9px",
-                    fontWeight: 600,
-                    letterSpacing: "0.03em",
-                    color:
-                      m.marketType === "spot"
-                        ? "#7c3aed"
-                        : m.marketType === "tradfi"
-                        ? "#b45309"
-                        : "#0369a1",
-                    backgroundColor:
-                      m.marketType === "spot"
-                        ? "#ede9fe"
-                        : m.marketType === "tradfi"
-                        ? "#fef3c7"
-                        : "#e0f2fe",
-                    borderRadius: 3,
-                    padding: "1px 4px",
-                    flexShrink: 0,
-                  }}
-                >
-                  {m.marketType.toUpperCase()}
-                </span>
-                <span
-                  style={{
-                    flex: 1,
-                    textAlign: "right",
-                    color: "#333",
-                    fontVariantNumeric: "tabular-nums",
-                    fontSize: "12px",
-                  }}
-                >
-                  {fmtSidebarPrice(m.price)}
-                </span>
-                <span
-                  style={{
-                    width: 44,
-                    textAlign: "right",
-                    fontWeight: 600,
-                    color: m.change24h >= 0 ? "#16a34a" : "#dc2626",
-                    fontVariantNumeric: "tabular-nums",
-                    fontSize: "12px",
-                  }}
-                >
-                  {m.change24h >= 0 ? "+" : ""}
-                  {m.change24h.toFixed(0)}%
-                </span>
-              </div>
-            ))}
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {markets.map((m) => {
+                const isSelected = m.coinId === selectedCoin;
+                return (
+                  <div
+                    key={m.coinId}
+                    onClick={() => setSelectedCoin(m.coinId)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      fontSize: "13px",
+                      cursor: "pointer",
+                      borderRadius: 4,
+                      padding: "4px 8px",
+                      backgroundColor: "transparent",
+                      transition: "background-color 0.1s",
+                      gap: 4,
+                      userSelect: "none",
+                      fontWeight: isSelected ? 700 : 400,
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLDivElement).style.backgroundColor = "#f9fafb";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent";
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 100,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        color: "#111",
+                        fontSize: "12px",
+                      }}
+                    >
+                      {m.marketType === "perp" ? `${m.coin}-USD` : m.coin}
+                    </span>
+                    <span
+                      style={{
+                        flex: 1,
+                        textAlign: "right",
+                        color: "#333",
+                        fontVariantNumeric: "tabular-nums",
+                        fontSize: "12px",
+                      }}
+                    >
+                      {fmtSidebarPrice(m.price)}
+                    </span>
+                    <span
+                      style={{
+                        width: 44,
+                        textAlign: "right",
+                        color: m.change24h >= 0 ? "#16a34a" : "#dc2626",
+                        fontVariantNumeric: "tabular-nums",
+                        fontSize: "12px",
+                      }}
+                    >
+                      {m.change24h >= 0 ? "+" : ""}
+                      {m.change24h.toFixed(0)}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Chart area */}
         <div
@@ -513,7 +529,13 @@ export default function Page() {
             </div>
           )}
 
-          <div style={{ height: "50%", width: "75%", minHeight: 0 }}>
+          <div
+            style={{
+              height: isNarrow ? "75%" : "50%",
+              width: isNarrow ? "80%" : "75%",
+              minHeight: 0,
+            }}
+          >
             {selectedCoin && (
               <Liveline
                 mode="candle"
@@ -532,6 +554,7 @@ export default function Page() {
                 grid
                 showValue
                 formatValue={fmtChartValue}
+                window={3600}
                 windows={[
                   { label: "5m", secs: 300 },
                   { label: "1h", secs: 3600 },
