@@ -46,13 +46,6 @@ function fmtSidebarPrice(p: number): string {
   return p.toFixed(5);
 }
 
-function fmtLarge(v: number): string {
-  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
-  if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
-  if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
-  return `$${v.toFixed(0)}`;
-}
-
 function fmtChartValue(v: number): string {
   if (v >= 10000) return `$${Math.round(v).toLocaleString("en-US")}`;
   if (v >= 1) return `$${v.toFixed(2)}`;
@@ -83,7 +76,6 @@ function toCandle(c: HLCandle): CandlePoint {
   };
 }
 
-/** Get local time components for a given IANA timezone. */
 function getTimeInZone(date: Date, tz: string): { h: number; m: number; day: number } {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: tz,
@@ -101,36 +93,26 @@ function getTimeInZone(date: Date, tz: string): { h: number; m: number; day: num
 }
 
 function tradfiMarketStatus(date: Date): { us: string; europe: string; asia: string } {
-  // US — NYSE/NASDAQ, Eastern Time
   const et = getTimeInZone(date, "America/New_York");
   const etMins = et.h * 60 + et.m;
   const usWkd = et.day >= 1 && et.day <= 5;
-  const us = !usWkd
-    ? "Closed"
-    : etMins >= 240 && etMins < 570
-    ? "Pre Market"   // 4:00am–9:30am ET
-    : etMins >= 570 && etMins < 960
-    ? "Open"         // 9:30am–4:00pm ET
+  const us = !usWkd ? "Closed"
+    : etMins >= 240 && etMins < 570 ? "Pre Market"
+    : etMins >= 570 && etMins < 960 ? "Open"
     : "Closed";
 
-  // Europe — London Stock Exchange, London time
   const lon = getTimeInZone(date, "Europe/London");
   const lonMins = lon.h * 60 + lon.m;
   const euWkd = lon.day >= 1 && lon.day <= 5;
-  const europe = !euWkd
-    ? "Closed"
-    : lonMins >= 480 && lonMins < 1050
-    ? "Open"         // 8:00am–4:30pm London
+  const europe = !euWkd ? "Closed"
+    : lonMins >= 480 && lonMins < 1050 ? "Open"
     : "Closed";
 
-  // Asia — Tokyo Stock Exchange, Japan time (two sessions, lunch 11:30–12:30)
   const tky = getTimeInZone(date, "Asia/Tokyo");
   const tkyMins = tky.h * 60 + tky.m;
   const asiaWkd = tky.day >= 1 && tky.day <= 5;
-  const asia = !asiaWkd
-    ? "Closed"
-    : (tkyMins >= 540 && tkyMins < 690) || (tkyMins >= 750 && tkyMins < 930)
-    ? "Open"         // 9:00am–11:30am and 12:30pm–3:30pm JST
+  const asia = !asiaWkd ? "Closed"
+    : (tkyMins >= 540 && tkyMins < 690) || (tkyMins >= 750 && tkyMins < 930) ? "Open"
     : "Closed";
 
   return { us, europe, asia };
@@ -146,7 +128,7 @@ export default function Page() {
   const [latestTick, setLatestTick] = useState(0);
   const [lineMode, setLineMode] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [currentWindow, setCurrentWindow] = useState(3600);
+  const [currentWindow, setCurrentWindow] = useState(86400);
   const [screenWidth, setScreenWidth] = useState(
     typeof window !== "undefined" ? window.innerWidth : 1600
   );
@@ -169,7 +151,7 @@ export default function Page() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
-  // Fetch top markets on mount
+  // Fetch markets on mount
   useEffect(() => {
     const perpsFetch = postInfo<
       [
@@ -242,11 +224,11 @@ export default function Page() {
     ).catch(() => [] as Market[]);
 
     Promise.all([perpsFetch, spotFetch, tradfiFetch]).then(([perps, spots, tradfi]) => {
-      const all = [...perps, ...spots, ...tradfi]
-        .sort((a, b) => b.volume - a.volume)
-        .slice(0, 10);
+      const all = [...perps, ...spots, ...tradfi].sort((a, b) => b.volume - a.volume);
       setMarkets(all);
-      if (all.length > 0) setSelectedCoin(all[0].coinId);
+      // Default selection: first tradfi asset
+      const firstTradfi = all.find((m) => m.marketType === "tradfi");
+      setSelectedCoin(firstTradfi?.coinId ?? all[0]?.coinId ?? "");
     });
   }, []);
 
@@ -262,11 +244,12 @@ export default function Page() {
     prevCandleTimeRef.current = 0;
 
     const endTime = Date.now();
-    const startTime = endTime - 25 * 60 * 60 * 1000; // 25h — enough for the 24h window
+    const startTime = endTime - 8 * 24 * 60 * 60 * 1000; // 8 days — covers 7d window
 
+    // Use 1h candles for day-scale windows
     postInfo<HLCandle[]>({
       type: "candleSnapshot",
-      req: { coin: selectedCoin, interval: "1m", startTime, endTime },
+      req: { coin: selectedCoin, interval: "1h", startTime, endTime },
     }).then((data) => {
       if (!data?.length || selectedCoinRef.current !== selectedCoin) return;
 
@@ -301,15 +284,11 @@ export default function Page() {
     wsRef.current = ws;
 
     ws.onopen = () => {
-      ws.send(
-        JSON.stringify({ method: "subscribe", subscription: { type: "allMids" } })
-      );
-      ws.send(
-        JSON.stringify({
-          method: "subscribe",
-          subscription: { type: "candle", coin: selectedCoin, interval: "1m" },
-        })
-      );
+      ws.send(JSON.stringify({ method: "subscribe", subscription: { type: "allMids" } }));
+      ws.send(JSON.stringify({
+        method: "subscribe",
+        subscription: { type: "candle", coin: selectedCoin, interval: "1h" },
+      }));
     };
 
     ws.onmessage = (event) => {
@@ -344,7 +323,7 @@ export default function Page() {
           if (prevCandleTimeRef.current > 0 && nowTime > prevCandleTimeRef.current) {
             const committed = liveCandleRef.current;
             if (committed) {
-              setCandles((prev) => [...prev, committed].slice(-1500));
+              setCandles((prev) => [...prev, committed].slice(-500));
             }
           }
 
@@ -358,7 +337,7 @@ export default function Page() {
             if (prev.length > 0 && prev[prev.length - 1].time >= nowTime) {
               return [...prev.slice(0, -1), tick];
             }
-            return [...prev.slice(-1500), tick];
+            return [...prev.slice(-500), tick];
           });
         }
       } catch {
@@ -373,18 +352,19 @@ export default function Page() {
   }, [selectedCoin]);
 
   const selectedMarket = markets.find((m) => m.coinId === selectedCoin);
-  const accentColor =
-    selectedMarket && selectedMarket.change24h < 0 ? "#dc2626" : "#16a34a";
+  const accentColor = selectedMarket && selectedMarket.change24h < 0 ? "#dc2626" : "#16a34a";
 
-  const isPhone = screenWidth < 480;
+  // Single breakpoint: narrow = < 1000px
   const isNarrow = screenWidth < 1000;
-  const showSidebar = !isNarrow || isPhone;
 
-  // Chart dimensions
-  const chartWidth = isPhone ? "80%" : isNarrow ? "60%" : "75%";
-  const chartHeight = isPhone ? "75%" : "50%";
-  // Left-align chart to clock when sidebar is hidden
-  const chartAreaPaddingLeft = isNarrow && !isPhone ? 24 : 8;
+  // Sidebar: narrow = compact (symbol + change only), full = all columns
+  // Chart: narrow = 90% wide / 75% tall, full = 75% wide / 50% tall
+  const sidebarWidth = isNarrow ? 130 : 260;
+  const chartWidth = isNarrow ? "90%" : "75%";
+  const chartHeight = isNarrow ? "75%" : "50%";
+
+  // Only xyz (tradfi) assets shown in sidebar
+  const sidebarMarkets = markets.filter((m) => m.marketType === "tradfi");
 
   const { us, europe, asia } = tradfiMarketStatus(now);
   const statusColor = (s: string) =>
@@ -400,19 +380,12 @@ export default function Page() {
         overflow: "hidden",
       }}
     >
-      {/* Datetime + market status header */}
+      {/* Clock + market status — left edge aligned to sidebar/chart */}
       <div style={{ flexShrink: 0, padding: "16px 24px 0" }}>
         <div style={{ fontWeight: "normal", fontSize: "13px", letterSpacing: "0.04em", color: "#111" }}>
           {fmtDateTime(now)}
         </div>
-        <div
-          style={{
-            display: "flex",
-            gap: 20,
-            marginTop: 6,
-            fontSize: "11px",
-          }}
-        >
+        <div style={{ display: "flex", gap: 20, marginTop: 6, fontSize: "11px" }}>
           {([
             { label: "US", status: us },
             { label: "Europe", status: europe },
@@ -431,109 +404,97 @@ export default function Page() {
       {/* Main body */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}>
 
-        {/* Sidebar */}
-        {showSidebar && (
-          <div
-            style={{
-              width: isPhone ? 80 : 260,
-              flexShrink: 0,
-              padding: isPhone ? "8px 0 24px 8px" : "8px 0 24px 24px",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <div
-              style={{
-                fontWeight: "bold",
-                fontSize: "13px",
-                marginBottom: 10,
-                color: "#111",
-              }}
-            >
-              {isPhone ? "Markets" : "Top Markets on Hyperliquid"}
-            </div>
+        {/* Sidebar — always visible, compact on narrow */}
+        <div
+          style={{
+            width: sidebarWidth,
+            flexShrink: 0,
+            padding: "8px 0 24px 24px",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <div style={{ fontWeight: "bold", fontSize: "13px", marginBottom: 10, color: "#111" }}>
+            Markets
+          </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {markets.map((m) => {
-                const isSelected = m.coinId === selectedCoin;
-                return (
-                  <div
-                    key={m.coinId}
-                    onClick={() => setSelectedCoin(m.coinId)}
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {sidebarMarkets.map((m) => {
+              const isSelected = m.coinId === selectedCoin;
+              return (
+                <div
+                  key={m.coinId}
+                  onClick={() => setSelectedCoin(m.coinId)}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    fontSize: "12px",
+                    cursor: "pointer",
+                    borderRadius: 4,
+                    padding: "4px 8px 4px 0",
+                    backgroundColor: "transparent",
+                    transition: "background-color 0.1s",
+                    gap: 4,
+                    userSelect: "none",
+                    fontWeight: isSelected ? 700 : 400,
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLDivElement).style.backgroundColor = "#f9fafb";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent";
+                  }}
+                >
+                  {/* Symbol */}
+                  <span
                     style={{
-                      display: "flex",
-                      alignItems: "center",
-                      fontSize: "13px",
-                      cursor: "pointer",
-                      borderRadius: 4,
-                      padding: "4px 8px",
-                      backgroundColor: "transparent",
-                      transition: "background-color 0.1s",
-                      gap: 4,
-                      userSelect: "none",
-                      fontWeight: isSelected ? 700 : 400,
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLDivElement).style.backgroundColor = "#f9fafb";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent";
+                      flex: 1,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      color: "#111",
                     }}
                   >
-                    {/* Symbol column — always shown */}
+                    {m.coin}
+                  </span>
+
+                  {/* Price — desktop only */}
+                  {!isNarrow && (
                     <span
                       style={{
-                        width: isPhone ? 60 : 100,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        color: "#111",
-                        fontSize: "12px",
+                        color: "#333",
+                        fontVariantNumeric: "tabular-nums",
+                        flexShrink: 0,
                       }}
                     >
-                      {m.marketType === "perp" ? `${m.coin}-USD` : m.coin}
+                      {fmtSidebarPrice(m.price)}
                     </span>
+                  )}
 
-                    {/* Price + change — desktop sidebar only */}
-                    {!isPhone && (
-                      <>
-                        <span
-                          style={{
-                            flex: 1,
-                            textAlign: "right",
-                            color: "#333",
-                            fontVariantNumeric: "tabular-nums",
-                            fontSize: "12px",
-                          }}
-                        >
-                          {fmtSidebarPrice(m.price)}
-                        </span>
-                        <span
-                          style={{
-                            width: 44,
-                            textAlign: "right",
-                            color: m.change24h >= 0 ? "#16a34a" : "#dc2626",
-                            fontVariantNumeric: "tabular-nums",
-                            fontSize: "12px",
-                          }}
-                        >
-                          {m.change24h >= 0 ? "+" : ""}
-                          {m.change24h.toFixed(0)}%
-                        </span>
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                  {/* 24h change — always shown */}
+                  <span
+                    style={{
+                      width: 38,
+                      textAlign: "right",
+                      color: m.change24h >= 0 ? "#16a34a" : "#dc2626",
+                      fontVariantNumeric: "tabular-nums",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {m.change24h >= 0 ? "+" : ""}
+                    {m.change24h.toFixed(0)}%
+                  </span>
+                </div>
+              );
+            })}
           </div>
-        )}
+        </div>
 
         {/* Chart area */}
         <div
           style={{
             flex: 1,
-            padding: `8px 24px 24px ${chartAreaPaddingLeft}px`,
+            padding: "8px 24px 24px 8px",
             display: "flex",
             flexDirection: "column",
             minWidth: 0,
@@ -554,16 +515,6 @@ export default function Page() {
                   ? `${selectedMarket.coin}-USD`
                   : selectedMarket.coin}
               </span>
-              <span style={{ fontSize: "12px", color: "#555" }}>
-                <span style={{ color: "#888", marginRight: 3 }}>Vol</span>
-                {fmtLarge(selectedMarket.volume)}
-              </span>
-              {selectedMarket.openInterest != null && (
-                <span style={{ fontSize: "12px", color: "#555" }}>
-                  <span style={{ color: "#888", marginRight: 3 }}>OI</span>
-                  {fmtLarge(selectedMarket.openInterest)}
-                </span>
-              )}
               <span
                 style={{
                   fontSize: "12px",
@@ -583,7 +534,7 @@ export default function Page() {
                 mode="candle"
                 candles={candles}
                 liveCandle={liveCandle}
-                candleWidth={60}
+                candleWidth={3600}
                 data={ticks}
                 value={latestTick}
                 lineMode={lineMode}
@@ -599,9 +550,9 @@ export default function Page() {
                 window={currentWindow}
                 onWindowChange={setCurrentWindow}
                 windows={[
-                  { label: "1h", secs: 3600 },
-                  { label: "4h", secs: 14400 },
-                  { label: "24h", secs: 86400 },
+                  { label: "1d", secs: 86400 },
+                  { label: "3d", secs: 259200 },
+                  { label: "7d", secs: 604800 },
                 ]}
               />
             )}
