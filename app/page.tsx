@@ -14,6 +14,8 @@ const HL_WS = "wss://api.hyperliquid.xyz/ws";
 
 interface Market {
   coin: string;
+  coinId: string;
+  marketType: "perp" | "spot";
   price: number;
   prevDayPx: number;
   change24h: number;
@@ -103,33 +105,61 @@ export default function Page() {
     return () => clearInterval(id);
   }, []);
 
-  // Fetch top markets on mount
+  // Fetch top markets on mount (perps + spot combined)
   useEffect(() => {
-    postInfo<
+    const perpsFetch = postInfo<
       [
         { universe: { name: string }[] },
         { markPx: string; dayNtlVlm: string; prevDayPx: string; openInterest?: string }[]
       ]
-    >({ type: "metaAndAssetCtxs" }).then(([meta, ctxs]) => {
-      const mkts = meta.universe
-        .map((asset, i) => {
+    >({ type: "metaAndAssetCtxs" }).then(([meta, ctxs]) =>
+      meta.universe.map((asset, i): Market => {
+        const ctx = ctxs[i];
+        const price = parseFloat(ctx.markPx);
+        const prev = parseFloat(ctx.prevDayPx);
+        return {
+          coin: asset.name,
+          coinId: asset.name,
+          marketType: "perp",
+          price,
+          prevDayPx: prev,
+          change24h: prev ? ((price - prev) / prev) * 100 : 0,
+          volume: parseFloat(ctx.dayNtlVlm),
+          openInterest: ctx.openInterest ? parseFloat(ctx.openInterest) : undefined,
+        };
+      })
+    );
+
+    const spotFetch = postInfo<
+      [
+        { universe: { name: string; index: number }[]; tokens: { name: string }[] },
+        { dayNtlVlm: string; prevDayPx: string | null; markPx: string | null; midPx: string | null }[]
+      ]
+    >({ type: "spotMetaAndAssetCtxs" }).then(([meta, ctxs]) =>
+      meta.universe
+        .map((asset, i): Market => {
           const ctx = ctxs[i];
-          const price = parseFloat(ctx.markPx);
-          const prev = parseFloat(ctx.prevDayPx);
+          const price = parseFloat(ctx.markPx ?? ctx.midPx ?? "0");
+          const prev = parseFloat(ctx.prevDayPx ?? "0");
           return {
             coin: asset.name,
+            coinId: `@${asset.index}`,
+            marketType: "spot",
             price,
             prevDayPx: prev,
-            change24h: prev ? ((price - prev) / prev) * 100 : 0,
-            volume: parseFloat(ctx.dayNtlVlm),
-            openInterest: ctx.openInterest ? parseFloat(ctx.openInterest) : undefined,
+            change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
+            volume: parseFloat(ctx.dayNtlVlm) || 0,
           };
         })
+        .filter((m) => m.price > 0 && m.volume > 0)
+    );
+
+    Promise.all([perpsFetch, spotFetch]).then(([perps, spots]) => {
+      const all = [...perps, ...spots]
         .sort((a, b) => b.volume - a.volume)
         .slice(0, 10);
-
-      setMarkets(mkts);
-      if (mkts.length > 0) setSelectedCoin(mkts[0].coin);
+      setMarkets(all);
+      if (all.length > 0) setSelectedCoin(all[0].coinId);
     });
   }, []);
 
@@ -204,7 +234,7 @@ export default function Page() {
           const mids = msg.data.mids as Record<string, string>;
           setMarkets((prev) =>
             prev.map((m) => {
-              const raw = mids[m.coin];
+              const raw = mids[m.coinId];
               if (!raw) return m;
               const newPrice = parseFloat(raw);
               return {
@@ -258,7 +288,7 @@ export default function Page() {
     };
   }, [selectedCoin]);
 
-  const selectedMarket = markets.find((m) => m.coin === selectedCoin);
+  const selectedMarket = markets.find((m) => m.coinId === selectedCoin);
   const accentColor =
     selectedMarket && selectedMarket.change24h < 0 ? "#dc2626" : "#16a34a";
 
@@ -320,8 +350,8 @@ export default function Page() {
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             {markets.map((m) => (
               <div
-                key={m.coin}
-                onClick={() => setSelectedCoin(m.coin)}
+                key={m.coinId}
+                onClick={() => setSelectedCoin(m.coinId)}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -330,18 +360,18 @@ export default function Page() {
                   borderRadius: 4,
                   padding: "4px 8px",
                   backgroundColor:
-                    m.coin === selectedCoin ? "#f3f4f6" : "transparent",
+                    m.coinId === selectedCoin ? "#f3f4f6" : "transparent",
                   transition: "background-color 0.1s",
                   gap: 4,
                   userSelect: "none",
                 }}
                 onMouseEnter={(e) => {
-                  if (m.coin !== selectedCoin)
+                  if (m.coinId !== selectedCoin)
                     (e.currentTarget as HTMLDivElement).style.backgroundColor =
                       "#f9fafb";
                 }}
                 onMouseLeave={(e) => {
-                  if (m.coin !== selectedCoin)
+                  if (m.coinId !== selectedCoin)
                     (e.currentTarget as HTMLDivElement).style.backgroundColor =
                       "transparent";
                 }}
@@ -349,7 +379,7 @@ export default function Page() {
                 <span
                   style={{
                     fontWeight: 600,
-                    width: 104,
+                    width: 90,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
@@ -357,7 +387,21 @@ export default function Page() {
                     fontSize: "12px",
                   }}
                 >
-                  {m.coin}-USD
+                  {m.marketType === "spot" ? m.coin : `${m.coin}-USD`}
+                </span>
+                <span
+                  style={{
+                    fontSize: "9px",
+                    fontWeight: 600,
+                    letterSpacing: "0.03em",
+                    color: m.marketType === "spot" ? "#7c3aed" : "#0369a1",
+                    backgroundColor: m.marketType === "spot" ? "#ede9fe" : "#e0f2fe",
+                    borderRadius: 3,
+                    padding: "1px 4px",
+                    flexShrink: 0,
+                  }}
+                >
+                  {m.marketType.toUpperCase()}
                 </span>
                 <span
                   style={{
@@ -409,7 +453,9 @@ export default function Page() {
               }}
             >
               <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>
-                {selectedCoin}-USD
+                {selectedMarket.marketType === "spot"
+                  ? selectedMarket.coin
+                  : `${selectedMarket.coin}-USD`}
               </span>
               <span style={{ fontSize: "12px", color: "#555" }}>
                 <span style={{ color: "#888", marginRight: 3 }}>Vol</span>
