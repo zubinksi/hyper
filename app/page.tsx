@@ -18,6 +18,7 @@ interface Market {
   prevDayPx: number;
   change24h: number;
   volume: number;
+  openInterest?: number;
 }
 
 interface HLCandle {
@@ -41,6 +42,13 @@ function fmtSidebarPrice(p: number): string {
   if (p >= 1000) return Math.round(p).toLocaleString("en-US");
   if (p >= 1) return p.toFixed(2);
   return p.toFixed(5);
+}
+
+function fmtLarge(v: number): string {
+  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}K`;
+  return `$${v.toFixed(0)}`;
 }
 
 function fmtChartValue(v: number): string {
@@ -100,7 +108,7 @@ export default function Page() {
     postInfo<
       [
         { universe: { name: string }[] },
-        { markPx: string; dayNtlVlm: string; prevDayPx: string }[]
+        { markPx: string; dayNtlVlm: string; prevDayPx: string; openInterest?: string }[]
       ]
     >({ type: "metaAndAssetCtxs" }).then(([meta, ctxs]) => {
       const mkts = meta.universe
@@ -114,6 +122,7 @@ export default function Page() {
             prevDayPx: prev,
             change24h: prev ? ((price - prev) / prev) * 100 : 0,
             volume: parseFloat(ctx.dayNtlVlm),
+            openInterest: ctx.openInterest ? parseFloat(ctx.openInterest) : undefined,
           };
         })
         .sort((a, b) => b.volume - a.volume)
@@ -276,6 +285,7 @@ export default function Page() {
       >
         {fmtDateTime(now)}
       </div>
+      <div style={{ height: 50, flexShrink: 0 }} />
 
       {/* Main body */}
       <div
@@ -388,20 +398,43 @@ export default function Page() {
             minWidth: 0,
           }}
         >
-          {selectedCoin && (
+          {selectedCoin && selectedMarket && (
             <div
               style={{
-                fontWeight: "bold",
-                fontSize: "13px",
+                display: "flex",
+                alignItems: "baseline",
+                gap: 16,
                 marginBottom: 4,
-                color: "#111",
+                flexWrap: "wrap",
               }}
             >
-              {selectedCoin}-USD
+              <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>
+                {selectedCoin}-USD
+              </span>
+              <span style={{ fontSize: "12px", color: "#555" }}>
+                <span style={{ color: "#888", marginRight: 3 }}>Vol</span>
+                {fmtLarge(selectedMarket.volume)}
+              </span>
+              {selectedMarket.openInterest != null && (
+                <span style={{ fontSize: "12px", color: "#555" }}>
+                  <span style={{ color: "#888", marginRight: 3 }}>OI</span>
+                  {fmtLarge(selectedMarket.openInterest)}
+                </span>
+              )}
+              <span
+                style={{
+                  fontSize: "12px",
+                  fontWeight: 600,
+                  color: selectedMarket.change24h >= 0 ? "#16a34a" : "#dc2626",
+                }}
+              >
+                {selectedMarket.change24h >= 0 ? "+" : ""}
+                {selectedMarket.change24h.toFixed(2)}%
+              </span>
             </div>
           )}
 
-          <div style={{ flex: 1, minHeight: 0 }}>
+          <div style={{ height: "50%", width: "75%", minHeight: 0 }}>
             {selectedCoin && (
               <Liveline
                 mode="candle"
@@ -418,11 +451,12 @@ export default function Page() {
                 color={accentColor}
                 loading={loading}
                 grid
+                showValue
                 formatValue={fmtChartValue}
                 windows={[
-                  { label: "15m", secs: 900 },
+                  { label: "5m", secs: 300 },
                   { label: "1h", secs: 3600 },
-                  { label: "2h", secs: 7200 },
+                  { label: "1d", secs: 86400 },
                 ]}
               />
             )}
