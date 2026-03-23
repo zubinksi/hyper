@@ -83,6 +83,59 @@ function toCandle(c: HLCandle): CandlePoint {
   };
 }
 
+/** Get local time components for a given IANA timezone. */
+function getTimeInZone(date: Date, tz: string): { h: number; m: number; day: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "2-digit",
+    weekday: "short",
+    hour12: false,
+  }).formatToParts(date);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "0";
+  const rawH = get("hour");
+  const h = rawH === "24" ? 0 : parseInt(rawH);
+  const m = parseInt(get("minute"));
+  const DAY_IDX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return { h, m, day: DAY_IDX[get("weekday")] ?? -1 };
+}
+
+function tradfiMarketStatus(date: Date): { us: string; europe: string; asia: string } {
+  // US — NYSE/NASDAQ, Eastern Time
+  const et = getTimeInZone(date, "America/New_York");
+  const etMins = et.h * 60 + et.m;
+  const usWkd = et.day >= 1 && et.day <= 5;
+  const us = !usWkd
+    ? "Closed"
+    : etMins >= 240 && etMins < 570
+    ? "Pre Market"   // 4:00am–9:30am ET
+    : etMins >= 570 && etMins < 960
+    ? "Open"         // 9:30am–4:00pm ET
+    : "Closed";
+
+  // Europe — London Stock Exchange, London time
+  const lon = getTimeInZone(date, "Europe/London");
+  const lonMins = lon.h * 60 + lon.m;
+  const euWkd = lon.day >= 1 && lon.day <= 5;
+  const europe = !euWkd
+    ? "Closed"
+    : lonMins >= 480 && lonMins < 1050
+    ? "Open"         // 8:00am–4:30pm London
+    : "Closed";
+
+  // Asia — Tokyo Stock Exchange, Japan time (two sessions, lunch 11:30–12:30)
+  const tky = getTimeInZone(date, "Asia/Tokyo");
+  const tkyMins = tky.h * 60 + tky.m;
+  const asiaWkd = tky.day >= 1 && tky.day <= 5;
+  const asia = !asiaWkd
+    ? "Closed"
+    : (tkyMins >= 540 && tkyMins < 690) || (tkyMins >= 750 && tkyMins < 930)
+    ? "Open"         // 9:00am–11:30am and 12:30pm–3:30pm JST
+    : "Closed";
+
+  return { us, europe, asia };
+}
+
 export default function Page() {
   const [now, setNow] = useState(() => new Date());
   const [markets, setMarkets] = useState<Market[]>([]);
@@ -93,6 +146,7 @@ export default function Page() {
   const [latestTick, setLatestTick] = useState(0);
   const [lineMode, setLineMode] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [currentWindow, setCurrentWindow] = useState(3600);
   const [screenWidth, setScreenWidth] = useState(
     typeof window !== "undefined" ? window.innerWidth : 1600
   );
@@ -174,8 +228,6 @@ export default function Page() {
         const ctx = ctxs[i];
         const price = parseFloat(ctx.markPx);
         const prev = parseFloat(ctx.prevDayPx);
-        // asset.name already contains the "xyz:" prefix (e.g. "xyz:SILVER")
-        // coinId keeps the full name for API calls; coin strips the prefix for display
         return {
           coin: asset.name.replace(/^xyz:/, ""),
           coinId: asset.name,
@@ -210,10 +262,8 @@ export default function Page() {
     prevCandleTimeRef.current = 0;
 
     const endTime = Date.now();
-    const startTime = endTime - 2 * 60 * 60 * 1000; // 2 hours
+    const startTime = endTime - 25 * 60 * 60 * 1000; // 25h — enough for the 24h window
 
-    // Use the full coinId as the coin name — Hyperliquid treats "xyz:SILVER" as the
-    // canonical identifier for HIP-3 assets, same as "BTC" for perps.
     postInfo<HLCandle[]>({
       type: "candleSnapshot",
       req: { coin: selectedCoin, interval: "1m", startTime, endTime },
@@ -254,7 +304,6 @@ export default function Page() {
       ws.send(
         JSON.stringify({ method: "subscribe", subscription: { type: "allMids" } })
       );
-      // Use the full coinId — the WS candle channel uses the same canonical name
       ws.send(
         JSON.stringify({
           method: "subscribe",
@@ -267,7 +316,6 @@ export default function Page() {
       try {
         const msg = JSON.parse(event.data as string);
 
-        // Price updates for sidebar
         if (msg.channel === "allMids" && msg.data?.mids) {
           const mids = msg.data.mids as Record<string, string>;
           setMarkets((prev) =>
@@ -286,7 +334,6 @@ export default function Page() {
           );
         }
 
-        // Live candle updates
         if (msg.channel === "candle" && msg.data) {
           const c = msg.data as HLCandle & { s: string };
           if (c.s !== selectedCoinRef.current) return;
@@ -297,7 +344,7 @@ export default function Page() {
           if (prevCandleTimeRef.current > 0 && nowTime > prevCandleTimeRef.current) {
             const committed = liveCandleRef.current;
             if (committed) {
-              setCandles((prev) => [...prev, committed].slice(-300));
+              setCandles((prev) => [...prev, committed].slice(-1500));
             }
           }
 
@@ -311,7 +358,7 @@ export default function Page() {
             if (prev.length > 0 && prev[prev.length - 1].time >= nowTime) {
               return [...prev.slice(0, -1), tick];
             }
-            return [...prev.slice(-600), tick];
+            return [...prev.slice(-1500), tick];
           });
         }
       } catch {
@@ -329,16 +376,19 @@ export default function Page() {
   const accentColor =
     selectedMarket && selectedMarket.change24h < 0 ? "#dc2626" : "#16a34a";
 
-  // Responsive breakpoints
   const isPhone = screenWidth < 480;
-  const isNarrow = screenWidth < 1000; // hides sidebar
+  const isNarrow = screenWidth < 1000;
+  const showSidebar = !isNarrow || isPhone;
 
   // Chart dimensions
   const chartWidth = isPhone ? "80%" : isNarrow ? "60%" : "75%";
   const chartHeight = isPhone ? "75%" : "50%";
+  // Left-align chart to clock when sidebar is hidden
+  const chartAreaPaddingLeft = isNarrow && !isPhone ? 24 : 8;
 
-  // When sidebar is hidden, align left padding to the clock (24px)
-  const chartAreaPaddingLeft = isNarrow ? 24 : 8;
+  const { us, europe, asia } = tradfiMarketStatus(now);
+  const statusColor = (s: string) =>
+    s === "Open" ? "#16a34a" : s === "Pre Market" ? "#d97706" : "#aaa";
 
   return (
     <div
@@ -350,37 +400,44 @@ export default function Page() {
         overflow: "hidden",
       }}
     >
-      {/* Top-left datetime */}
-      <div
-        style={{
-          padding: "16px 24px 8px",
-          fontWeight: "normal",
-          fontSize: "13px",
-          letterSpacing: "0.04em",
-          color: "#111",
-          flexShrink: 0,
-        }}
-      >
-        {fmtDateTime(now)}
+      {/* Datetime + market status header */}
+      <div style={{ flexShrink: 0, padding: "16px 24px 0" }}>
+        <div style={{ fontWeight: "normal", fontSize: "13px", letterSpacing: "0.04em", color: "#111" }}>
+          {fmtDateTime(now)}
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 20,
+            marginTop: 6,
+            fontSize: "11px",
+          }}
+        >
+          {([
+            { label: "US", status: us },
+            { label: "Europe", status: europe },
+            { label: "Asia", status: asia },
+          ] as const).map(({ label, status }) => (
+            <span key={label}>
+              <span style={{ color: "#aaa" }}>{label}</span>{" "}
+              <span style={{ color: statusColor(status) }}>{status}</span>
+            </span>
+          ))}
+        </div>
       </div>
-      <div style={{ height: 50, flexShrink: 0 }} />
+
+      <div style={{ height: 32, flexShrink: 0 }} />
 
       {/* Main body */}
-      <div
-        style={{
-          display: "flex",
-          flex: 1,
-          overflow: "hidden",
-          minHeight: 0,
-        }}
-      >
-        {/* Sidebar — hidden on narrow/phone screens */}
-        {!isNarrow && (
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}>
+
+        {/* Sidebar */}
+        {showSidebar && (
           <div
             style={{
-              width: 260,
+              width: isPhone ? 80 : 260,
               flexShrink: 0,
-              padding: "8px 0 24px 24px",
+              padding: isPhone ? "8px 0 24px 8px" : "8px 0 24px 24px",
               display: "flex",
               flexDirection: "column",
             }}
@@ -393,7 +450,7 @@ export default function Page() {
                 color: "#111",
               }}
             >
-              Top Markets on Hyperliquid
+              {isPhone ? "Markets" : "Top Markets on Hyperliquid"}
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -423,9 +480,10 @@ export default function Page() {
                       (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent";
                     }}
                   >
+                    {/* Symbol column — always shown */}
                     <span
                       style={{
-                        width: 100,
+                        width: isPhone ? 60 : 100,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
@@ -435,29 +493,35 @@ export default function Page() {
                     >
                       {m.marketType === "perp" ? `${m.coin}-USD` : m.coin}
                     </span>
-                    <span
-                      style={{
-                        flex: 1,
-                        textAlign: "right",
-                        color: "#333",
-                        fontVariantNumeric: "tabular-nums",
-                        fontSize: "12px",
-                      }}
-                    >
-                      {fmtSidebarPrice(m.price)}
-                    </span>
-                    <span
-                      style={{
-                        width: 44,
-                        textAlign: "right",
-                        color: m.change24h >= 0 ? "#16a34a" : "#dc2626",
-                        fontVariantNumeric: "tabular-nums",
-                        fontSize: "12px",
-                      }}
-                    >
-                      {m.change24h >= 0 ? "+" : ""}
-                      {m.change24h.toFixed(0)}%
-                    </span>
+
+                    {/* Price + change — desktop sidebar only */}
+                    {!isPhone && (
+                      <>
+                        <span
+                          style={{
+                            flex: 1,
+                            textAlign: "right",
+                            color: "#333",
+                            fontVariantNumeric: "tabular-nums",
+                            fontSize: "12px",
+                          }}
+                        >
+                          {fmtSidebarPrice(m.price)}
+                        </span>
+                        <span
+                          style={{
+                            width: 44,
+                            textAlign: "right",
+                            color: m.change24h >= 0 ? "#16a34a" : "#dc2626",
+                            fontVariantNumeric: "tabular-nums",
+                            fontSize: "12px",
+                          }}
+                        >
+                          {m.change24h >= 0 ? "+" : ""}
+                          {m.change24h.toFixed(0)}%
+                        </span>
+                      </>
+                    )}
                   </div>
                 );
               })}
@@ -532,11 +596,12 @@ export default function Page() {
                 grid
                 showValue
                 formatValue={fmtChartValue}
-                window={3600}
+                window={currentWindow}
+                onWindowChange={setCurrentWindow}
                 windows={[
                   { label: "1h", secs: 3600 },
-                  { label: "5m", secs: 300 },
-                  { label: "1d", secs: 86400 },
+                  { label: "4h", secs: 14400 },
+                  { label: "24h", secs: 86400 },
                 ]}
               />
             )}
