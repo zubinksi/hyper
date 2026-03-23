@@ -331,7 +331,7 @@ export default function Page() {
 
   // Responsive breakpoints
   const isPhone = screenWidth < 480;
-  const isNarrow = screenWidth < 1500; // hides sidebar
+  const isNarrow = screenWidth < 1000; // hides sidebar
 
   // Chart dimensions
   const chartWidth = isPhone ? "80%" : isNarrow ? "60%" : "75%";
@@ -534,8 +534,8 @@ export default function Page() {
                 formatValue={fmtChartValue}
                 window={3600}
                 windows={[
-                  { label: "5m", secs: 300 },
                   { label: "1h", secs: 3600 },
+                  { label: "5m", secs: 300 },
                   { label: "1d", secs: 86400 },
                 ]}
               />
