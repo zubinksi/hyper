@@ -15,7 +15,7 @@ const HL_WS = "wss://api.hyperliquid.xyz/ws";
 interface Market {
   coin: string;
   coinId: string;
-  marketType: "perp" | "spot";
+  marketType: "perp" | "spot" | "tradfi";
   price: number;
   prevDayPx: number;
   change24h: number;
@@ -154,8 +154,31 @@ export default function Page() {
         .filter((m) => m.price > 0 && m.volume > 0)
     );
 
-    Promise.all([perpsFetch, spotFetch]).then(([perps, spots]) => {
-      const all = [...perps, ...spots]
+    const tradfiFetch = postInfo<
+      [
+        { universe: { name: string }[] },
+        { markPx: string; dayNtlVlm: string; prevDayPx: string; openInterest?: string }[]
+      ]
+    >({ type: "metaAndAssetCtxs", dex: "xyz" }).then(([meta, ctxs]) =>
+      meta.universe.map((asset, i): Market => {
+        const ctx = ctxs[i];
+        const price = parseFloat(ctx.markPx);
+        const prev = parseFloat(ctx.prevDayPx);
+        return {
+          coin: asset.name,
+          coinId: `xyz:${asset.name}`,
+          marketType: "tradfi",
+          price: isNaN(price) ? 0 : price,
+          prevDayPx: isNaN(prev) ? 0 : prev,
+          change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
+          volume: parseFloat(ctx.dayNtlVlm) || 0,
+          openInterest: ctx.openInterest ? parseFloat(ctx.openInterest) : undefined,
+        };
+      }).filter((m) => m.price > 0 && m.volume > 0)
+    ).catch(() => [] as Market[]);
+
+    Promise.all([perpsFetch, spotFetch, tradfiFetch]).then(([perps, spots, tradfi]) => {
+      const all = [...perps, ...spots, ...tradfi]
         .sort((a, b) => b.volume - a.volume)
         .slice(0, 10);
       setMarkets(all);
@@ -394,8 +417,18 @@ export default function Page() {
                     fontSize: "9px",
                     fontWeight: 600,
                     letterSpacing: "0.03em",
-                    color: m.marketType === "spot" ? "#7c3aed" : "#0369a1",
-                    backgroundColor: m.marketType === "spot" ? "#ede9fe" : "#e0f2fe",
+                    color:
+                      m.marketType === "spot"
+                        ? "#7c3aed"
+                        : m.marketType === "tradfi"
+                        ? "#b45309"
+                        : "#0369a1",
+                    backgroundColor:
+                      m.marketType === "spot"
+                        ? "#ede9fe"
+                        : m.marketType === "tradfi"
+                        ? "#fef3c7"
+                        : "#e0f2fe",
                     borderRadius: 3,
                     padding: "1px 4px",
                     flexShrink: 0,
@@ -453,9 +486,9 @@ export default function Page() {
               }}
             >
               <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>
-                {selectedMarket.marketType === "spot"
-                  ? selectedMarket.coin
-                  : `${selectedMarket.coin}-USD`}
+                {selectedMarket.marketType === "perp"
+                  ? `${selectedMarket.coin}-USD`
+                  : selectedMarket.coin}
               </span>
               <span style={{ fontSize: "12px", color: "#555" }}>
                 <span style={{ color: "#888", marginRight: 3 }}>Vol</span>
