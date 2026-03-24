@@ -156,40 +156,31 @@ async function fetchXyzMarkets(): Promise<Market[]> {
     .slice(0, 15);
 }
 
-/** Build predict (outcome) markets from testnet — HIP-4 markets are spot tokens with marketType === "outcome" */
+/** Build predict (outcome) markets — HIP-4 markets have marketType === "outcome" */
 async function fetchPredictMarkets(): Promise<Market[]> {
-  // Outcome markets are spot-based (HIP-4); they appear in spotMetaAndAssetCtxs
-  const [meta, ctxs] = await postInfo<[
-    { universe: { name: string; marketType?: string }[]; tokens: unknown[] },
-    { markPx: string; dayNtlVlm: string; prevDayPx: string }[]
-  ]>({ type: "spotMetaAndAssetCtxs" }, HL_TESTNET_INFO);
+  type AssetCtx = { markPx: string; dayNtlVlm: string; prevDayPx: string };
+  type UniverseItem = Record<string, unknown> & { name: string };
+  type MetaCtxs = [{ universe: UniverseItem[] }, AssetCtx[]];
 
-  console.log("[predict] spotMetaAndAssetCtxs universe sample:", meta.universe.slice(0, 5));
-  const outcomeMarkets = meta.universe.filter((a) => a.marketType === "outcome");
-  console.log("[predict] outcome markets found:", outcomeMarkets.length, outcomeMarkets.slice(0, 3));
+  // Try both endpoints on both networks; log everything so we can see where outcome markets live
+  const [testnetPerp, testnetSpot, mainnetPerp, mainnetSpot] = await Promise.all([
+    postInfo<MetaCtxs>({ type: "metaAndAssetCtxs" }, HL_TESTNET_INFO).catch(() => null),
+    postInfo<MetaCtxs>({ type: "spotMetaAndAssetCtxs" }, HL_TESTNET_INFO).catch(() => null),
+    postInfo<MetaCtxs>({ type: "metaAndAssetCtxs" }, HL_INFO).catch(() => null),
+    postInfo<MetaCtxs>({ type: "spotMetaAndAssetCtxs" }, HL_INFO).catch(() => null),
+  ]);
 
-  return meta.universe
-    .map((asset, i) => ({ asset, ctx: ctxs[i] }))
-    .filter(({ asset }) => asset.marketType === "outcome")
-    .map(({ asset, ctx }): Market => {
-      const price = parseFloat(ctx.markPx);
-      const prev = parseFloat(ctx.prevDayPx);
-      const cleanName = asset.name.replace(/^predict:/, "");
-      return {
-        coin: cleanName,
-        coinId: `predict:${cleanName}`,
-        apiCoin: cleanName, // testnet candle API takes the bare name
-        testnet: true,
-        marketType: "predict",
-        price: isNaN(price) ? 0 : price,
-        prevDayPx: isNaN(prev) ? 0 : prev,
-        change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
-        volume: parseFloat(ctx.dayNtlVlm) || 0,
-      };
-    })
-    .filter((m) => m.price > 0)
-    .sort((a, b) => b.volume - a.volume)
-    .slice(0, 15);
+  for (const [label, result] of [
+    ["testnet perp", testnetPerp], ["testnet spot", testnetSpot],
+    ["mainnet perp", mainnetPerp], ["mainnet spot", mainnetSpot],
+  ] as const) {
+    if (!result) { console.log(`[predict] ${label}: failed`); continue; }
+    const u = result[0].universe;
+    const outcome = u.filter((a) => a.marketType === "outcome");
+    console.log(`[predict] ${label}: ${u.length} total, ${outcome.length} outcome`, outcome.slice(0, 2));
+  }
+
+  return [];
 }
 
 export default function Page() {
