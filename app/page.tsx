@@ -80,21 +80,18 @@ function toCandle(c: HLCandle): CandlePoint {
   };
 }
 
-/** Fetch and group outcome markets. Entries sharing the same description are
- *  collapsed into one multi-outcome market; lone entries are binary markets. */
 async function fetchPredictMarkets(): Promise<Market[]> {
-  type OutcomeEntry = {
-    outcome: number;
-    name: string;
-    description: string;
-    sideSpecs: { name: string }[];
-  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type OutcomeEntry = Record<string, any>;
   type AssetCtx = { markPx: string; dayNtlVlm: string; prevDayPx: string };
 
   const [meta, [spotMeta, spotCtxs]] = await Promise.all([
     postInfo<{ outcomes: OutcomeEntry[] }>({ type: "outcomeMeta" }),
     postInfo<[{ universe: { name: string }[] }, AssetCtx[]]>({ type: "spotMetaAndAssetCtxs" }),
   ]);
+
+  // Log raw structure so we can find the grouping field
+  console.log("[outcomeMeta] first 6 entries:", JSON.stringify(meta.outcomes?.slice(0, 6), null, 2));
 
   const priceMap = new Map<string, AssetCtx>();
   spotMeta.universe.forEach((u, i) => priceMap.set(u.name, spotCtxs[i]));
