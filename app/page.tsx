@@ -162,25 +162,25 @@ async function fetchPredictMarkets(): Promise<Market[]> {
   type UniverseItem = Record<string, unknown> & { name: string };
   type MetaCtxs = [{ universe: UniverseItem[] }, AssetCtx[]];
 
-  // Probe spotMeta tokens array and look for non-standard universe names
+  // Probe mainnet spotMeta for outcome/predict markets
   try {
-    const raw = await postInfo<{ universe: UniverseItem[]; tokens: UniverseItem[] }>({ type: "spotMeta" }, HL_TESTNET_INFO);
+    const raw = await postInfo<{ universe: UniverseItem[]; tokens: UniverseItem[] }>({ type: "spotMeta" }, HL_INFO);
 
-    // Check tokens array
+    // Tokens with non-null fullName are likely outcome tokens
     const tokens = raw.tokens ?? [];
-    const tokenKeys = new Set<string>();
-    tokens.forEach((t) => Object.keys(t).forEach((k) => tokenKeys.add(k)));
-    const tokenSuspects = tokens.filter((t) =>
-      Object.values(t).some((v) => typeof v === "string" && /outcome|predict|binary|yes|no/i.test(v))
-    );
-    console.log(`[predict] suspect tokens ALL:`, tokenSuspects);
+    const withFullName = tokens.filter((t) => (t as any).fullName != null);
+    console.log(`[predict] mainnet tokens with fullName: ${withFullName.length}`, withFullName);
 
-    // Check universe for non-@N names
+    // Universe: non-@N named markets
     const universe = raw.universe ?? [];
     const namedMarkets = universe.filter((m) => !/^@\d+$/.test(m.name));
-    console.log(`[predict] named markets ALL:`, namedMarkets);
+    console.log(`[predict] mainnet named markets: ${namedMarkets.length}`, namedMarkets);
+
+    // Any token where deployerTradingFeeShare > 0 (outcome markets charge a fee)
+    const withFee = tokens.filter((t) => parseFloat((t as any).deployerTradingFeeShare ?? "0") > 0);
+    console.log(`[predict] mainnet tokens with fee: ${withFee.length}`, withFee.slice(0, 5));
   } catch (e) {
-    console.log("[predict] spotMeta probe error:", e);
+    console.log("[predict] mainnet spotMeta probe error:", e);
   }
 
   return [];
