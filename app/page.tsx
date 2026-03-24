@@ -176,8 +176,14 @@ async function fetchPredictMarkets(): Promise<Market[]> {
   ] as const) {
     if (!result) { console.log(`[predict] ${label}: failed`); continue; }
     const u = result[0].universe;
-    const outcome = u.filter((a) => a.marketType === "outcome");
-    console.log(`[predict] ${label}: ${u.length} total, ${outcome.length} outcome`, outcome.slice(0, 2));
+    // Collect all unique keys seen across universe items
+    const allKeys = new Set<string>();
+    u.forEach((a) => Object.keys(a).forEach((k) => allKeys.add(k)));
+    // Find any item that looks like an outcome/predict market by scanning all string values
+    const suspects = u.filter((a) =>
+      Object.values(a).some((v) => typeof v === "string" && /outcome|predict|binary/i.test(v))
+    );
+    console.log(`[predict] ${label}: ${u.length} total | keys: ${[...allKeys].join(",")} | suspects: ${suspects.length}`, suspects.slice(0, 2));
   }
 
   return [];
