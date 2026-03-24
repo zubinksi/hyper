@@ -81,79 +81,81 @@ function toCandle(c: HLCandle): CandlePoint {
 }
 
 async function fetchPredictMarkets(): Promise<Market[]> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  type OutcomeEntry = Record<string, any>;
+  type OutcomeEntry = {
+    outcome: number;
+    name: string;
+    sideSpecs: { name: string }[];
+  };
+  type QuestionEntry = {
+    name: string;
+    namedOutcomes: number[];
+    fallbackOutcome: number;
+  };
   type AssetCtx = { markPx: string; dayNtlVlm: string; prevDayPx: string };
 
   const [meta, [spotMeta, spotCtxs]] = await Promise.all([
-    postInfo<{ outcomes: OutcomeEntry[] }>({ type: "outcomeMeta" }),
+    postInfo<{ outcomes: OutcomeEntry[]; questions?: QuestionEntry[] }>({ type: "outcomeMeta" }),
     postInfo<[{ universe: { name: string }[] }, AssetCtx[]]>({ type: "spotMetaAndAssetCtxs" }),
   ]);
-
-  // Log raw structure so we can find the grouping field
-  console.log("[outcomeMeta] first 6 entries:", JSON.stringify(meta.outcomes?.slice(0, 6), null, 2));
 
   const priceMap = new Map<string, AssetCtx>();
   spotMeta.universe.forEach((u, i) => priceMap.set(u.name, spotCtxs[i]));
 
-  // Group entries by description; fall back to name so lone entries stay solo
-  const groups = new Map<string, OutcomeEntry[]>();
-  for (const entry of meta.outcomes) {
-    const key = entry.description?.trim() || `__solo__${entry.outcome}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(entry);
-  }
+  const outcomeById = new Map<number, OutcomeEntry>();
+  for (const e of meta.outcomes) outcomeById.set(e.outcome, e);
 
+  const claimedIds = new Set<number>();
   const markets: Market[] = [];
 
-  for (const [key, entries] of groups) {
-    if (entries.length === 1) {
-      // ── Binary market (single outcome entry with yes/no sides) ──────────
-      const entry = entries[0];
-      const yesEncoding = 10 * entry.outcome + 0;
-      const noEncoding = 10 * entry.outcome + 1;
-      const yesCtx = priceMap.get(`#${yesEncoding}`);
-      const noCtx = priceMap.get(`#${noEncoding}`);
+  // ── Grouped markets from questions[] ──────────────────────────────────
+  for (const q of (meta.questions ?? [])) {
+    const ids = [...q.namedOutcomes, q.fallbackOutcome].filter((id) => id != null);
+    for (const id of ids) claimedIds.add(id);
 
-      const yesPrice = parseFloat(yesCtx?.markPx ?? "0") || 0;
-      // If no-side has no market data, infer as complement of yes-side
-      const noRaw = parseFloat(noCtx?.markPx ?? "0") || 0;
-      const noPrice = noRaw > 0 ? noRaw : yesPrice > 0 ? 1 - yesPrice : 0;
+    let totalVolume = 0;
+    const options: OutcomeOption[] = ids.map((id) => {
+      const entry = outcomeById.get(id);
+      const coinId = `#${10 * id}`;
+      const ctx = priceMap.get(coinId);
+      const price = parseFloat(ctx?.markPx ?? "0") || 0;
+      totalVolume += parseFloat(ctx?.dayNtlVlm ?? "0") || 0;
+      return { name: entry?.name ?? String(id), coinId, price };
+    });
 
-      markets.push({
-        question: entry.name,
-        coinId: `#${yesEncoding}`,
-        testnet: true,
-        volume: parseFloat(yesCtx?.dayNtlVlm ?? "0") || 0,
-        isBinary: true,
-        options: [
-          { name: entry.sideSpecs[0]?.name ?? "Yes", coinId: `#${yesEncoding}`, price: yesPrice },
-          { name: entry.sideSpecs[1]?.name ?? "No", coinId: `#${noEncoding}`, price: noPrice },
-        ],
-      });
-    } else {
-      // ── Multi-outcome market (each entry = one option, yes-side = its prob) ─
-      let totalVolume = 0;
-      const options: OutcomeOption[] = entries.map((entry) => {
-        const yesEncoding = 10 * entry.outcome + 0;
-        const ctx = priceMap.get(`#${yesEncoding}`);
-        const price = parseFloat(ctx?.markPx ?? "0") || 0;
-        totalVolume += parseFloat(ctx?.dayNtlVlm ?? "0") || 0;
-        return { name: entry.name, coinId: `#${yesEncoding}`, price };
-      });
+    markets.push({
+      question: q.name,
+      coinId: options[0]?.coinId ?? "",
+      testnet: true,
+      volume: totalVolume,
+      isBinary: false,
+      options,
+    });
+  }
 
-      // Use the shared description as the question label; fall back to grouped key
-      const question = entries[0].description?.trim() || key;
+  // ── Standalone (unclaimed) outcomes ───────────────────────────────────
+  for (const entry of meta.outcomes) {
+    if (claimedIds.has(entry.outcome)) continue;
 
-      markets.push({
-        question,
-        coinId: options[0].coinId,
-        testnet: true,
-        volume: totalVolume,
-        isBinary: false,
-        options,
-      });
-    }
+    const enc0 = 10 * entry.outcome;
+    const enc1 = 10 * entry.outcome + 1;
+    const ctx0 = priceMap.get(`#${enc0}`);
+    const ctx1 = priceMap.get(`#${enc1}`);
+
+    const price0 = parseFloat(ctx0?.markPx ?? "0") || 0;
+    const price1Raw = parseFloat(ctx1?.markPx ?? "0") || 0;
+    const price1 = price1Raw > 0 ? price1Raw : price0 > 0 ? 1 - price0 : 0;
+
+    markets.push({
+      question: entry.name,
+      coinId: `#${enc0}`,
+      testnet: true,
+      volume: parseFloat(ctx0?.dayNtlVlm ?? "0") || 0,
+      isBinary: true,
+      options: [
+        { name: entry.sideSpecs[0]?.name ?? "Yes", coinId: `#${enc0}`, price: price0 },
+        { name: entry.sideSpecs[1]?.name ?? "No", coinId: `#${enc1}`, price: price1 },
+      ],
+    });
   }
 
   return markets.sort((a, b) => b.volume - a.volume);
