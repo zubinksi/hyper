@@ -11,11 +11,17 @@ const Liveline = dynamic(
 
 const HL_INFO = "https://api.hyperliquid.xyz/info";
 const HL_WS = "wss://api.hyperliquid.xyz/ws";
+const HL_TESTNET_INFO = "https://api.hyperliquid-testnet.xyz/info";
+const HL_TESTNET_WS = "wss://api.hyperliquid-testnet.xyz/ws";
+
+type MarketSource = "xyz" | "predict";
 
 interface Market {
   coin: string;
   coinId: string;
-  marketType: "perp" | "spot" | "tradfi";
+  apiCoin: string;   // coin name used in API calls (may differ from coinId)
+  testnet: boolean;
+  marketType: "tradfi" | "predict";
   price: number;
   prevDayPx: number;
   change24h: number;
@@ -31,8 +37,8 @@ interface HLCandle {
   c: string;
 }
 
-async function postInfo<T>(body: object): Promise<T> {
-  const res = await fetch(HL_INFO, {
+async function postInfo<T>(body: object, url = HL_INFO): Promise<T> {
+  const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -118,8 +124,73 @@ function tradfiMarketStatus(date: Date): { us: string; europe: string; asia: str
   return { us, europe, asia };
 }
 
+/** Build xyz (tradfi) markets from mainnet */
+async function fetchXyzMarkets(): Promise<Market[]> {
+  const [meta, ctxs] = await postInfo<[
+    { universe: { name: string }[] },
+    { markPx: string; dayNtlVlm: string; prevDayPx: string; openInterest?: string }[]
+  ]>({ type: "metaAndAssetCtxs", dex: "xyz" });
+
+  return meta.universe
+    .map((asset, i): Market => {
+      const ctx = ctxs[i];
+      const price = parseFloat(ctx.markPx);
+      const prev = parseFloat(ctx.prevDayPx);
+      // asset.name already contains "xyz:" prefix
+      const apiCoin = asset.name; // full name is the canonical API identifier
+      return {
+        coin: asset.name.replace(/^xyz:/, ""),
+        coinId: asset.name,
+        apiCoin,
+        testnet: false,
+        marketType: "tradfi",
+        price: isNaN(price) ? 0 : price,
+        prevDayPx: isNaN(prev) ? 0 : prev,
+        change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
+        volume: parseFloat(ctx.dayNtlVlm) || 0,
+        openInterest: ctx.openInterest ? parseFloat(ctx.openInterest) : undefined,
+      };
+    })
+    .filter((m) => m.price > 0 && m.volume > 0)
+    .sort((a, b) => b.volume - a.volume)
+    .slice(0, 15);
+}
+
+/** Build predict markets from testnet */
+async function fetchPredictMarkets(): Promise<Market[]> {
+  const [meta, ctxs] = await postInfo<[
+    { universe: { name: string }[] },
+    { markPx: string; dayNtlVlm: string; prevDayPx: string; openInterest?: string }[]
+  ]>({ type: "metaAndAssetCtxs", dex: "predict" }, HL_TESTNET_INFO);
+
+  return meta.universe
+    .map((asset, i): Market => {
+      const ctx = ctxs[i];
+      const price = parseFloat(ctx.markPx);
+      const prev = parseFloat(ctx.prevDayPx);
+      // Strip any "predict:" prefix for display; use bare name for API calls
+      const cleanName = asset.name.replace(/^predict:/, "");
+      return {
+        coin: cleanName,
+        coinId: `predict:${cleanName}`,
+        apiCoin: cleanName, // testnet candle API takes the bare name
+        testnet: true,
+        marketType: "predict",
+        price: isNaN(price) ? 0 : price,
+        prevDayPx: isNaN(prev) ? 0 : prev,
+        change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
+        volume: parseFloat(ctx.dayNtlVlm) || 0,
+        openInterest: ctx.openInterest ? parseFloat(ctx.openInterest) : undefined,
+      };
+    })
+    .filter((m) => m.price > 0)
+    .sort((a, b) => b.volume - a.volume)
+    .slice(0, 15);
+}
+
 export default function Page() {
   const [now, setNow] = useState(() => new Date());
+  const [source, setSource] = useState<MarketSource>("xyz");
   const [markets, setMarkets] = useState<Market[]>([]);
   const [selectedCoin, setSelectedCoin] = useState("");
   const [candles, setCandles] = useState<CandlePoint[]>([]);
@@ -135,8 +206,11 @@ export default function Page() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const selectedCoinRef = useRef("");
+  const selectedApiCoinRef = useRef(""); // bare coin name for WS message matching
   const liveCandleRef = useRef<CandlePoint | undefined>(undefined);
   const prevCandleTimeRef = useRef(0);
+  // Track testnet flag alongside selectedCoin changes (updated synchronously)
+  const selectedTestnetRef = useRef(false);
 
   // Clock
   useEffect(() => {
@@ -151,91 +225,33 @@ export default function Page() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
-  // Fetch markets on mount
+  // Fetch markets when source changes
   useEffect(() => {
-    const perpsFetch = postInfo<
-      [
-        { universe: { name: string }[] },
-        { markPx: string; dayNtlVlm: string; prevDayPx: string; openInterest?: string }[]
-      ]
-    >({ type: "metaAndAssetCtxs" }).then(([meta, ctxs]) =>
-      meta.universe.map((asset, i): Market => {
-        const ctx = ctxs[i];
-        const price = parseFloat(ctx.markPx);
-        const prev = parseFloat(ctx.prevDayPx);
-        return {
-          coin: asset.name,
-          coinId: asset.name,
-          marketType: "perp",
-          price,
-          prevDayPx: prev,
-          change24h: prev ? ((price - prev) / prev) * 100 : 0,
-          volume: parseFloat(ctx.dayNtlVlm),
-          openInterest: ctx.openInterest ? parseFloat(ctx.openInterest) : undefined,
-        };
+    setMarkets([]);
+    setSelectedCoin("");
+
+    const load = source === "xyz" ? fetchXyzMarkets() : fetchPredictMarkets();
+    load
+      .then((all) => {
+        setMarkets(all);
+        if (all.length > 0) {
+          selectedTestnetRef.current = all[0].testnet;
+          setSelectedCoin(all[0].coinId);
+        }
       })
-    );
-
-    const spotFetch = postInfo<
-      [
-        { universe: { name: string; index: number }[]; tokens: { name: string }[] },
-        { dayNtlVlm: string; prevDayPx: string | null; markPx: string | null; midPx: string | null }[]
-      ]
-    >({ type: "spotMetaAndAssetCtxs" }).then(([meta, ctxs]) =>
-      meta.universe
-        .map((asset, i): Market => {
-          const ctx = ctxs[i];
-          const price = parseFloat(ctx.markPx ?? ctx.midPx ?? "0");
-          const prev = parseFloat(ctx.prevDayPx ?? "0");
-          return {
-            coin: asset.name,
-            coinId: `@${asset.index}`,
-            marketType: "spot",
-            price,
-            prevDayPx: prev,
-            change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
-            volume: parseFloat(ctx.dayNtlVlm) || 0,
-          };
-        })
-        .filter((m) => m.price > 0 && m.volume > 0)
-    );
-
-    const tradfiFetch = postInfo<
-      [
-        { universe: { name: string }[] },
-        { markPx: string; dayNtlVlm: string; prevDayPx: string; openInterest?: string }[]
-      ]
-    >({ type: "metaAndAssetCtxs", dex: "xyz" }).then(([meta, ctxs]) =>
-      meta.universe.map((asset, i): Market => {
-        const ctx = ctxs[i];
-        const price = parseFloat(ctx.markPx);
-        const prev = parseFloat(ctx.prevDayPx);
-        return {
-          coin: asset.name.replace(/^xyz:/, ""),
-          coinId: asset.name,
-          marketType: "tradfi",
-          price: isNaN(price) ? 0 : price,
-          prevDayPx: isNaN(prev) ? 0 : prev,
-          change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
-          volume: parseFloat(ctx.dayNtlVlm) || 0,
-          openInterest: ctx.openInterest ? parseFloat(ctx.openInterest) : undefined,
-        };
-      }).filter((m) => m.price > 0 && m.volume > 0)
-    ).catch(() => [] as Market[]);
-
-    Promise.all([perpsFetch, spotFetch, tradfiFetch]).then(([perps, spots, tradfi]) => {
-      const all = [...perps, ...spots, ...tradfi].sort((a, b) => b.volume - a.volume);
-      setMarkets(all);
-      // Default selection: first tradfi asset
-      const firstTradfi = all.find((m) => m.marketType === "tradfi");
-      setSelectedCoin(firstTradfi?.coinId ?? all[0]?.coinId ?? "");
-    });
-  }, []);
+      .catch(() => setMarkets([]));
+  }, [source]);
 
   // Fetch candle history when selected coin changes
   useEffect(() => {
     if (!selectedCoin) return;
     selectedCoinRef.current = selectedCoin;
+
+    const isTestnet = selectedTestnetRef.current;
+    const market = markets.find((m) => m.coinId === selectedCoin);
+    const apiCoin = market?.apiCoin ?? selectedCoin;
+    selectedApiCoinRef.current = apiCoin;
+
     setLoading(true);
     setCandles([]);
     setTicks([]);
@@ -244,23 +260,19 @@ export default function Page() {
     prevCandleTimeRef.current = 0;
 
     const endTime = Date.now();
-    const startTime = endTime - 8 * 24 * 60 * 60 * 1000; // 8 days — covers 7d window
+    const startTime = endTime - 8 * 24 * 60 * 60 * 1000;
 
-    // Use 1h candles for day-scale windows
-    postInfo<HLCandle[]>({
-      type: "candleSnapshot",
-      req: { coin: selectedCoin, interval: "1h", startTime, endTime },
-    }).then((data) => {
+    postInfo<HLCandle[]>(
+      { type: "candleSnapshot", req: { coin: apiCoin, interval: "1h", startTime, endTime } },
+      isTestnet ? HL_TESTNET_INFO : HL_INFO
+    ).then((data) => {
       if (!data?.length || selectedCoinRef.current !== selectedCoin) return;
-
       const pts = data.map(toCandle);
       const live = pts[pts.length - 1];
-
       setCandles(pts.slice(0, -1));
       setLiveCandle(live);
       liveCandleRef.current = live;
       prevCandleTimeRef.current = live.time;
-
       const tickPts: LivelinePoint[] = data.map((c) => ({
         time: Math.floor(c.t / 1000),
         value: parseFloat(c.c),
@@ -269,6 +281,7 @@ export default function Page() {
       setLatestTick(live.close);
       setLoading(false);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCoin]);
 
   // WebSocket — recreate when selected coin changes
@@ -280,14 +293,19 @@ export default function Page() {
       wsRef.current = null;
     }
 
-    const ws = new WebSocket(HL_WS);
+    const isTestnet = selectedTestnetRef.current;
+    const market = markets.find((m) => m.coinId === selectedCoin);
+    const apiCoin = market?.apiCoin ?? selectedCoin;
+    const wsUrl = isTestnet ? HL_TESTNET_WS : HL_WS;
+
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ method: "subscribe", subscription: { type: "allMids" } }));
       ws.send(JSON.stringify({
         method: "subscribe",
-        subscription: { type: "candle", coin: selectedCoin, interval: "1h" },
+        subscription: { type: "candle", coin: apiCoin, interval: "1h" },
       }));
     };
 
@@ -299,7 +317,7 @@ export default function Page() {
           const mids = msg.data.mids as Record<string, string>;
           setMarkets((prev) =>
             prev.map((m) => {
-              const raw = mids[m.coinId];
+              const raw = mids[m.apiCoin];
               if (!raw) return m;
               const newPrice = parseFloat(raw);
               return {
@@ -315,16 +333,14 @@ export default function Page() {
 
         if (msg.channel === "candle" && msg.data) {
           const c = msg.data as HLCandle & { s: string };
-          if (c.s !== selectedCoinRef.current) return;
+          if (c.s !== selectedApiCoinRef.current) return;
 
           const pt = toCandle(c);
           const nowTime = pt.time;
 
           if (prevCandleTimeRef.current > 0 && nowTime > prevCandleTimeRef.current) {
             const committed = liveCandleRef.current;
-            if (committed) {
-              setCandles((prev) => [...prev, committed].slice(-500));
-            }
+            if (committed) setCandles((prev) => [...prev, committed].slice(-500));
           }
 
           prevCandleTimeRef.current = nowTime;
@@ -349,22 +365,15 @@ export default function Page() {
       ws.close();
       wsRef.current = null;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCoin]);
 
   const selectedMarket = markets.find((m) => m.coinId === selectedCoin);
   const accentColor = selectedMarket && selectedMarket.change24h < 0 ? "#dc2626" : "#16a34a";
-
-  // Single breakpoint: narrow = < 1000px
   const isNarrow = screenWidth < 1000;
-
-  // Sidebar: narrow = compact (symbol + change only), full = all columns
-  // Chart: narrow = 90% wide / 75% tall, full = 75% wide / 50% tall
   const sidebarWidth = isNarrow ? 130 : 260;
   const chartWidth = isNarrow ? "90%" : "75%";
   const chartHeight = isNarrow ? "75%" : "50%";
-
-  // Only xyz (tradfi) assets shown in sidebar
-  const sidebarMarkets = markets.filter((m) => m.marketType === "tradfi");
 
   const { us, europe, asia } = tradfiMarketStatus(now);
   const statusColor = (s: string) =>
@@ -380,7 +389,7 @@ export default function Page() {
         overflow: "hidden",
       }}
     >
-      {/* Clock + market status — left edge aligned to sidebar/chart */}
+      {/* Clock + market status */}
       <div style={{ flexShrink: 0, padding: "16px 24px 0" }}>
         <div style={{ fontWeight: "normal", fontSize: "13px", letterSpacing: "0.04em", color: "#111" }}>
           {fmtDateTime(now)}
@@ -404,7 +413,7 @@ export default function Page() {
       {/* Main body */}
       <div style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}>
 
-        {/* Sidebar — always visible, compact on narrow */}
+        {/* Sidebar */}
         <div
           style={{
             width: sidebarWidth,
@@ -414,17 +423,50 @@ export default function Page() {
             flexDirection: "column",
           }}
         >
-          <div style={{ fontWeight: "bold", fontSize: "13px", marginBottom: 10, color: "#111" }}>
-            Markets
+          {/* Title + source toggle */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              marginBottom: 10,
+              paddingRight: 8,
+            }}
+          >
+            <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>Markets</span>
+            <div style={{ display: "flex", gap: 2 }}>
+              {(["xyz", "predict"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSource(s)}
+                  style={{
+                    padding: "2px 6px",
+                    borderRadius: 3,
+                    border: "none",
+                    background: source === s ? "#111" : "transparent",
+                    color: source === s ? "#fff" : "#aaa",
+                    cursor: "pointer",
+                    fontSize: "10px",
+                    fontWeight: source === s ? 600 : 400,
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  {s === "predict" ? "Predict" : "xyz"}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {sidebarMarkets.map((m) => {
+            {markets.map((m) => {
               const isSelected = m.coinId === selectedCoin;
               return (
                 <div
                   key={m.coinId}
-                  onClick={() => setSelectedCoin(m.coinId)}
+                  onClick={() => {
+                    selectedTestnetRef.current = m.testnet;
+                    setSelectedCoin(m.coinId);
+                  }}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -445,7 +487,6 @@ export default function Page() {
                     (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent";
                   }}
                 >
-                  {/* Symbol */}
                   <span
                     style={{
                       flex: 1,
@@ -458,20 +499,12 @@ export default function Page() {
                     {m.coin}
                   </span>
 
-                  {/* Price — desktop only */}
                   {!isNarrow && (
-                    <span
-                      style={{
-                        color: "#333",
-                        fontVariantNumeric: "tabular-nums",
-                        flexShrink: 0,
-                      }}
-                    >
+                    <span style={{ color: "#333", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
                       {fmtSidebarPrice(m.price)}
                     </span>
                   )}
 
-                  {/* 24h change — always shown */}
                   <span
                     style={{
                       width: 38,
@@ -511,9 +544,7 @@ export default function Page() {
               }}
             >
               <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>
-                {selectedMarket.marketType === "perp"
-                  ? `${selectedMarket.coin}-USD`
-                  : selectedMarket.coin}
+                {selectedMarket.coin}
               </span>
               <span
                 style={{
