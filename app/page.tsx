@@ -156,45 +156,57 @@ async function fetchXyzMarkets(): Promise<Market[]> {
     .slice(0, 15);
 }
 
-/** Build predict (outcome) markets — HIP-4 markets have marketType === "outcome" */
+/** Build predict (outcome) markets via the outcomeMeta endpoint (testnet) */
 async function fetchPredictMarkets(): Promise<Market[]> {
+  type OutcomeEntry = {
+    outcome: number;
+    name: string;
+    description: string;
+    sideSpecs: { name: string }[];
+  };
   type AssetCtx = { markPx: string; dayNtlVlm: string; prevDayPx: string };
-  type UniverseItem = Record<string, unknown> & { name: string };
-  type MetaCtxs = [{ universe: UniverseItem[] }, AssetCtx[]];
 
-  // Probe 1: metaAndAssetCtxs without dex (default perp meta — check for predict flags)
-  try {
-    const [meta] = await postInfo<[{ universe: UniverseItem[] }, unknown[]]>(
-      { type: "metaAndAssetCtxs" }, HL_INFO
-    );
-    const suspects = meta.universe.filter((u) =>
-      JSON.stringify(u).match(/predict|outcome|binary|isPredict|marketType/i)
-    );
-    console.log(`[predict] default meta suspects: ${suspects.length}`, suspects.slice(0, 5));
-    if (meta.universe[0]) console.log("[predict] default meta keys:", Object.keys(meta.universe[0]));
-  } catch (e) { console.log("[predict] default meta error:", e); }
+  // outcomeMeta is testnet-only per docs
+  const meta = await postInfo<{ outcomes: OutcomeEntry[] }>(
+    { type: "outcomeMeta" },
+    HL_TESTNET_INFO
+  );
 
-  // Probe 2: spotMetaAndAssetCtxs — check full token/universe fields
-  try {
-    const [spotMeta] = await postInfo<[{ universe: UniverseItem[]; tokens: UniverseItem[] }, unknown[]]>(
-      { type: "spotMetaAndAssetCtxs" }, HL_INFO
-    );
-    const { universe = [], tokens = [] } = spotMeta;
-    if (tokens[0]) console.log("[predict] spot token keys:", Object.keys(tokens[0]));
-    if (universe[0]) console.log("[predict] spot universe keys:", Object.keys(universe[0]));
-    const tokenSuspects = tokens.filter((t) => JSON.stringify(t).match(/predict|outcome|binary|isPredict/i));
-    console.log(`[predict] spot token suspects: ${tokenSuspects.length}`, tokenSuspects.slice(0, 5));
-    const uniSuspects = universe.filter((u) => JSON.stringify(u).match(/predict|outcome|binary|isPredict/i));
-    console.log(`[predict] spot universe suspects: ${uniSuspects.length}`, uniSuspects.slice(0, 5));
-  } catch (e) { console.log("[predict] spotMetaAndAssetCtxs error:", e); }
+  // Fetch spot prices for outcome coins (#<encoding> format) from testnet
+  const [spotMeta, spotCtxs] = await postInfo<[
+    { universe: { name: string }[] },
+    AssetCtx[]
+  ]>({ type: "spotMetaAndAssetCtxs" }, HL_TESTNET_INFO);
 
-  // Probe 3: metaAndAssetCtxs with dex:"predict"
-  try {
-    const r = await postInfo<unknown>({ type: "metaAndAssetCtxs", dex: "predict" }, HL_INFO);
-    console.log("[predict] dex=predict response:", r);
-  } catch (e) { console.log("[predict] dex=predict error:", e); }
+  const priceMap = new Map<string, AssetCtx>();
+  spotMeta.universe.forEach((u, i) => priceMap.set(u.name, spotCtxs[i]));
 
-  return [];
+  const markets: Market[] = [];
+  for (const entry of meta.outcomes) {
+    for (let side = 0; side <= 1; side++) {
+      const encoding = 10 * entry.outcome + side;
+      const coin = `#${encoding}`;
+      const sideName = entry.sideSpecs[side]?.name ?? (side === 0 ? "Yes" : "No");
+      const ctx = priceMap.get(coin);
+
+      const price = parseFloat(ctx?.markPx ?? "0");
+      const prev = parseFloat(ctx?.prevDayPx ?? "0");
+
+      markets.push({
+        coin: `${entry.name} · ${sideName}`,
+        coinId: coin,
+        apiCoin: coin,
+        testnet: true,
+        marketType: "predict",
+        price: isNaN(price) ? 0 : price,
+        prevDayPx: isNaN(prev) ? 0 : prev,
+        change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
+        volume: parseFloat(ctx?.dayNtlVlm ?? "0") || 0,
+      });
+    }
+  }
+
+  return markets.sort((a, b) => b.volume - a.volume);
 }
 
 export default function Page() {
