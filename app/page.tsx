@@ -2,29 +2,31 @@
 
 import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
-import type { CandlePoint, LivelinePoint } from "liveline";
+import type { CandlePoint, LivelinePoint, LivelineSeries } from "liveline";
 
 const Liveline = dynamic(
   () => import("liveline").then((m) => ({ default: m.Liveline })),
   { ssr: false }
 );
 
-const HL_INFO = "https://api.hyperliquid.xyz/info";
-const HL_WS = "wss://api.hyperliquid.xyz/ws";
 const HL_TESTNET_INFO = "https://api.hyperliquid-testnet.xyz/info";
 const HL_TESTNET_WS = "wss://api.hyperliquid-testnet.xyz/ws";
 
-interface Market {
-  coin: string;
+const MULTI_COLORS = ["#3b82f6", "#f97316", "#8b5cf6", "#10b981", "#f59e0b", "#ec4899"];
+
+interface OutcomeOption {
+  name: string;
   coinId: string;
-  apiCoin: string;
+  price: number; // 0–1 probability
+}
+
+interface Market {
+  question: string;  // display label
+  coinId: string;    // primary coin (first option's yes-side)
   testnet: boolean;
-  price: number;
-  prevDayPx: number;
-  change24h: number;
   volume: number;
-  yesPct: number;
-  noPct: number;
+  options: OutcomeOption[];
+  isBinary: boolean; // two-option yes/no market
 }
 
 interface HLCandle {
@@ -35,7 +37,7 @@ interface HLCandle {
   c: string;
 }
 
-async function postInfo<T>(body: object, url = HL_INFO): Promise<T> {
+async function postInfo<T>(body: object, url = HL_TESTNET_INFO): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -48,6 +50,10 @@ function fmtChartValue(v: number): string {
   if (v >= 10000) return `$${Math.round(v).toLocaleString("en-US")}`;
   if (v >= 1) return `$${v.toFixed(2)}`;
   return `$${v.toFixed(5)}`;
+}
+
+function fmtPct(v: number): string {
+  return `${v.toFixed(1)}%`;
 }
 
 function fmtDateTime(d: Date): string {
@@ -74,7 +80,8 @@ function toCandle(c: HLCandle): CandlePoint {
   };
 }
 
-/** One row per outcome, collapsed Yes+No sides */
+/** Fetch and group outcome markets. Entries sharing the same description are
+ *  collapsed into one multi-outcome market; lone entries are binary markets. */
 async function fetchPredictMarkets(): Promise<Market[]> {
   type OutcomeEntry = {
     outcome: number;
@@ -84,53 +91,90 @@ async function fetchPredictMarkets(): Promise<Market[]> {
   };
   type AssetCtx = { markPx: string; dayNtlVlm: string; prevDayPx: string };
 
-  const [metaResult, spotResult] = await Promise.all([
-    postInfo<{ outcomes: OutcomeEntry[] }>({ type: "outcomeMeta" }, HL_TESTNET_INFO),
-    postInfo<[{ universe: { name: string }[] }, AssetCtx[]]>(
-      { type: "spotMetaAndAssetCtxs" }, HL_TESTNET_INFO
-    ),
+  const [meta, [spotMeta, spotCtxs]] = await Promise.all([
+    postInfo<{ outcomes: OutcomeEntry[] }>({ type: "outcomeMeta" }),
+    postInfo<[{ universe: { name: string }[] }, AssetCtx[]]>({ type: "spotMetaAndAssetCtxs" }),
   ]);
 
-  const [spotMeta, spotCtxs] = spotResult;
   const priceMap = new Map<string, AssetCtx>();
   spotMeta.universe.forEach((u, i) => priceMap.set(u.name, spotCtxs[i]));
 
-  return metaResult.outcomes.map((entry) => {
-    const yesEncoding = 10 * entry.outcome + 0;
-    const noEncoding = 10 * entry.outcome + 1;
-    const yesCoin = `#${yesEncoding}`;
-    const noCoin = `#${noEncoding}`;
-    const yesCtx = priceMap.get(yesCoin);
-    const noCtx = priceMap.get(noCoin);
+  // Group entries by description; fall back to name so lone entries stay solo
+  const groups = new Map<string, OutcomeEntry[]>();
+  for (const entry of meta.outcomes) {
+    const key = entry.description?.trim() || `__solo__${entry.outcome}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(entry);
+  }
 
-    const yesPrice = parseFloat(yesCtx?.markPx ?? "0") || 0;
-    const noPrice = parseFloat(noCtx?.markPx ?? "0") || 0;
-    const yesPrev = parseFloat(yesCtx?.prevDayPx ?? "0") || 0;
+  const markets: Market[] = [];
 
-    return {
-      coin: entry.name,
-      coinId: yesCoin,
-      apiCoin: yesCoin,
-      testnet: true,
-      price: yesPrice,
-      prevDayPx: yesPrev,
-      change24h: yesPrev && yesPrice ? ((yesPrice - yesPrev) / yesPrev) * 100 : 0,
-      volume: parseFloat(yesCtx?.dayNtlVlm ?? "0") || 0,
-      yesPct: yesPrice * 100,
-      noPct: noPrice * 100,
-    };
-  }).sort((a, b) => b.volume - a.volume);
+  for (const [key, entries] of groups) {
+    if (entries.length === 1) {
+      // ── Binary market (single outcome entry with yes/no sides) ──────────
+      const entry = entries[0];
+      const yesEncoding = 10 * entry.outcome + 0;
+      const noEncoding = 10 * entry.outcome + 1;
+      const yesCtx = priceMap.get(`#${yesEncoding}`);
+      const noCtx = priceMap.get(`#${noEncoding}`);
+
+      const yesPrice = parseFloat(yesCtx?.markPx ?? "0") || 0;
+      // If no-side has no market data, infer as complement of yes-side
+      const noRaw = parseFloat(noCtx?.markPx ?? "0") || 0;
+      const noPrice = noRaw > 0 ? noRaw : yesPrice > 0 ? 1 - yesPrice : 0;
+
+      markets.push({
+        question: entry.name,
+        coinId: `#${yesEncoding}`,
+        testnet: true,
+        volume: parseFloat(yesCtx?.dayNtlVlm ?? "0") || 0,
+        isBinary: true,
+        options: [
+          { name: entry.sideSpecs[0]?.name ?? "Yes", coinId: `#${yesEncoding}`, price: yesPrice },
+          { name: entry.sideSpecs[1]?.name ?? "No", coinId: `#${noEncoding}`, price: noPrice },
+        ],
+      });
+    } else {
+      // ── Multi-outcome market (each entry = one option, yes-side = its prob) ─
+      let totalVolume = 0;
+      const options: OutcomeOption[] = entries.map((entry) => {
+        const yesEncoding = 10 * entry.outcome + 0;
+        const ctx = priceMap.get(`#${yesEncoding}`);
+        const price = parseFloat(ctx?.markPx ?? "0") || 0;
+        totalVolume += parseFloat(ctx?.dayNtlVlm ?? "0") || 0;
+        return { name: entry.name, coinId: `#${yesEncoding}`, price };
+      });
+
+      // Use the shared description as the question label; fall back to grouped key
+      const question = entries[0].description?.trim() || key;
+
+      markets.push({
+        question,
+        coinId: options[0].coinId,
+        testnet: true,
+        volume: totalVolume,
+        isBinary: false,
+        options,
+      });
+    }
+  }
+
+  return markets.sort((a, b) => b.volume - a.volume);
 }
 
 export default function Page() {
   const [now, setNow] = useState(() => new Date());
   const [markets, setMarkets] = useState<Market[]>([]);
   const [selectedCoin, setSelectedCoin] = useState("");
+  // Binary chart state
   const [candles, setCandles] = useState<CandlePoint[]>([]);
   const [liveCandle, setLiveCandle] = useState<CandlePoint | undefined>();
   const [ticks, setTicks] = useState<LivelinePoint[]>([]);
   const [latestTick, setLatestTick] = useState(0);
   const [lineMode, setLineMode] = useState(true);
+  // Multi-outcome chart state
+  const [multiSeries, setMultiSeries] = useState<LivelineSeries[]>([]);
+
   const [loading, setLoading] = useState(true);
   const [currentWindow, setCurrentWindow] = useState(86400);
   const [screenWidth, setScreenWidth] = useState(
@@ -142,7 +186,6 @@ export default function Page() {
   const selectedApiCoinRef = useRef("");
   const liveCandleRef = useRef<CandlePoint | undefined>(undefined);
   const prevCandleTimeRef = useRef(0);
-  const selectedTestnetRef = useRef(true);
 
   // Clock
   useEffect(() => {
@@ -150,91 +193,111 @@ export default function Page() {
     return () => clearInterval(id);
   }, []);
 
-  // Screen width tracking
+  // Screen width
   useEffect(() => {
     const handler = () => setScreenWidth(window.innerWidth);
     window.addEventListener("resize", handler);
     return () => window.removeEventListener("resize", handler);
   }, []);
 
-  // Fetch predict markets on mount
+  // Fetch markets on mount
   useEffect(() => {
     fetchPredictMarkets()
       .then((all) => {
         setMarkets(all);
-        if (all.length > 0) {
-          selectedTestnetRef.current = all[0].testnet;
-          setSelectedCoin(all[0].coinId);
-        }
+        if (all.length > 0) setSelectedCoin(all[0].coinId);
       })
       .catch(() => setMarkets([]));
   }, []);
 
-  // Fetch candle history when selected coin changes
+  // Fetch chart data when selection changes
   useEffect(() => {
     if (!selectedCoin) return;
     selectedCoinRef.current = selectedCoin;
 
-    const isTestnet = selectedTestnetRef.current;
     const market = markets.find((m) => m.coinId === selectedCoin);
-    const apiCoin = market?.apiCoin ?? selectedCoin;
-    selectedApiCoinRef.current = apiCoin;
+    if (!market) return;
 
     setLoading(true);
     setCandles([]);
     setTicks([]);
     setLiveCandle(undefined);
+    setMultiSeries([]);
     liveCandleRef.current = undefined;
     prevCandleTimeRef.current = 0;
 
     const endTime = Date.now();
     const startTime = endTime - 8 * 24 * 60 * 60 * 1000;
 
-    postInfo<HLCandle[]>(
-      { type: "candleSnapshot", req: { coin: apiCoin, interval: "1h", startTime, endTime } },
-      isTestnet ? HL_TESTNET_INFO : HL_INFO
-    ).then((data) => {
-      if (!data?.length || selectedCoinRef.current !== selectedCoin) return;
-      const pts = data.map(toCandle);
-      const live = pts[pts.length - 1];
-      setCandles(pts.slice(0, -1));
-      setLiveCandle(live);
-      liveCandleRef.current = live;
-      prevCandleTimeRef.current = live.time;
-      const tickPts: LivelinePoint[] = data.map((c) => ({
-        time: Math.floor(c.t / 1000),
-        value: parseFloat(c.c),
-      }));
-      setTicks(tickPts);
-      setLatestTick(live.close);
-      setLoading(false);
-    });
+    if (market.isBinary) {
+      const apiCoin = market.coinId;
+      selectedApiCoinRef.current = apiCoin;
+
+      postInfo<HLCandle[]>(
+        { type: "candleSnapshot", req: { coin: apiCoin, interval: "1h", startTime, endTime } }
+      ).then((data) => {
+        if (!data?.length || selectedCoinRef.current !== selectedCoin) return;
+        const pts = data.map(toCandle);
+        const live = pts[pts.length - 1];
+        setCandles(pts.slice(0, -1));
+        setLiveCandle(live);
+        liveCandleRef.current = live;
+        prevCandleTimeRef.current = live.time;
+        const tickPts = data.map((c) => ({
+          time: Math.floor(c.t / 1000),
+          value: parseFloat(c.c),
+        }));
+        setTicks(tickPts);
+        setLatestTick(live.close);
+        setLoading(false);
+      });
+    } else {
+      // Fetch candles for all options in parallel
+      Promise.all(
+        market.options.map((opt) =>
+          postInfo<HLCandle[]>(
+            { type: "candleSnapshot", req: { coin: opt.coinId, interval: "1h", startTime, endTime } }
+          ).then((data) => data ?? [])
+        )
+      ).then((allData) => {
+        if (selectedCoinRef.current !== selectedCoin) return;
+        const series: LivelineSeries[] = market.options.map((opt, i) => ({
+          id: opt.coinId,
+          label: opt.name,
+          color: MULTI_COLORS[i % MULTI_COLORS.length],
+          value: opt.price,
+          data: allData[i].map((c) => ({
+            time: Math.floor(c.t / 1000),
+            value: parseFloat(c.c),
+          })),
+        }));
+        setMultiSeries(series);
+        setLoading(false);
+      });
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCoin]);
 
-  // WebSocket — recreate when selected coin changes
+  // WebSocket
   useEffect(() => {
     if (!selectedCoin) return;
 
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
+    wsRef.current?.close();
+    wsRef.current = null;
 
-    const isTestnet = selectedTestnetRef.current;
     const market = markets.find((m) => m.coinId === selectedCoin);
-    const apiCoin = market?.apiCoin ?? selectedCoin;
-    const wsUrl = isTestnet ? HL_TESTNET_WS : HL_WS;
-
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(HL_TESTNET_WS);
     wsRef.current = ws;
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ method: "subscribe", subscription: { type: "allMids" } }));
-      ws.send(JSON.stringify({
-        method: "subscribe",
-        subscription: { type: "candle", coin: apiCoin, interval: "1h" },
-      }));
+      // Only subscribe to candle for binary markets
+      if (market?.isBinary) {
+        ws.send(JSON.stringify({
+          method: "subscribe",
+          subscription: { type: "candle", coin: market.coinId, interval: "1h" },
+        }));
+      }
     };
 
     ws.onmessage = (event) => {
@@ -243,19 +306,28 @@ export default function Page() {
 
         if (msg.channel === "allMids" && msg.data?.mids) {
           const mids = msg.data.mids as Record<string, string>;
+
+          // Update market option prices
           setMarkets((prev) =>
             prev.map((m) => {
-              const raw = mids[m.apiCoin];
-              if (!raw) return m;
-              const newPrice = parseFloat(raw);
-              return {
-                ...m,
-                price: newPrice,
-                yesPct: newPrice * 100,
-                change24h: m.prevDayPx
-                  ? ((newPrice - m.prevDayPx) / m.prevDayPx) * 100
-                  : m.change24h,
-              };
+              const updatedOptions = m.options.map((opt) => {
+                const raw = mids[opt.coinId];
+                if (!raw) return opt;
+                return { ...opt, price: parseFloat(raw) };
+              });
+              // For binary: if yes has price, infer no as complement
+              if (m.isBinary && updatedOptions[0].price > 0 && !mids[updatedOptions[1].coinId]) {
+                updatedOptions[1] = { ...updatedOptions[1], price: 1 - updatedOptions[0].price };
+              }
+              return { ...m, options: updatedOptions };
+            })
+          );
+
+          // Update multi-series live values
+          setMultiSeries((prev) =>
+            prev.map((s) => {
+              const raw = mids[s.id];
+              return raw ? { ...s, value: parseFloat(raw) } : s;
             })
           );
         }
@@ -286,7 +358,7 @@ export default function Page() {
           });
         }
       } catch {
-        // ignore parse errors
+        // ignore
       }
     };
 
@@ -298,11 +370,13 @@ export default function Page() {
   }, [selectedCoin]);
 
   const selectedMarket = markets.find((m) => m.coinId === selectedCoin);
-  const accentColor = selectedMarket && selectedMarket.change24h < 0 ? "#dc2626" : "#16a34a";
   const isNarrow = screenWidth < 1000;
-  const sidebarWidth = isNarrow ? 160 : 280;
+  const sidebarWidth = isNarrow ? 180 : 300;
   const chartWidth = isNarrow ? "90%" : "75%";
   const chartHeight = isNarrow ? "75%" : "50%";
+
+  const yesPrice = selectedMarket?.isBinary ? selectedMarket.options[0].price : 0;
+  const accentColor = yesPrice < 0.5 ? "#dc2626" : "#16a34a";
 
   return (
     <div
@@ -346,10 +420,7 @@ export default function Page() {
               return (
                 <div
                   key={m.coinId}
-                  onClick={() => {
-                    selectedTestnetRef.current = m.testnet;
-                    setSelectedCoin(m.coinId);
-                  }}
+                  onClick={() => setSelectedCoin(m.coinId)}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -379,28 +450,37 @@ export default function Page() {
                       color: "#111",
                     }}
                   >
-                    {m.coin}
+                    {m.question}
                   </span>
-                  <span
-                    style={{
-                      color: "#16a34a",
-                      fontVariantNumeric: "tabular-nums",
-                      flexShrink: 0,
-                      fontSize: "11px",
-                    }}
-                  >
-                    {m.yesPct.toFixed(0)}%
-                  </span>
-                  <span
-                    style={{
-                      color: "#dc2626",
-                      fontVariantNumeric: "tabular-nums",
-                      flexShrink: 0,
-                      fontSize: "11px",
-                    }}
-                  >
-                    {m.noPct.toFixed(0)}%
-                  </span>
+
+                  {m.isBinary ? (
+                    // Yes% / No% for binary
+                    <>
+                      <span style={{ color: "#16a34a", fontVariantNumeric: "tabular-nums", flexShrink: 0, fontSize: "11px" }}>
+                        {fmtPct(m.options[0].price * 100)}
+                      </span>
+                      <span style={{ color: "#dc2626", fontVariantNumeric: "tabular-nums", flexShrink: 0, fontSize: "11px" }}>
+                        {fmtPct(m.options[1].price * 100)}
+                      </span>
+                    </>
+                  ) : (
+                    // Colored dots + % for multi-outcome
+                    <div style={{ display: "flex", gap: 3, flexShrink: 0, alignItems: "center" }}>
+                      {m.options.map((opt, i) => (
+                        <span
+                          key={opt.coinId}
+                          title={opt.name}
+                          style={{
+                            fontSize: "10px",
+                            color: MULTI_COLORS[i % MULTI_COLORS.length],
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {Math.round(opt.price * 100)}%
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -417,55 +497,88 @@ export default function Page() {
             minWidth: 0,
           }}
         >
-          {selectedCoin && selectedMarket && (
+          {selectedMarket && (
             <div
               style={{
                 display: "flex",
                 alignItems: "baseline",
-                gap: 16,
+                gap: 12,
                 marginBottom: 4,
                 flexWrap: "wrap",
               }}
             >
               <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>
-                {selectedMarket.coin}
+                {selectedMarket.question}
               </span>
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#16a34a" }}>
-                Yes {selectedMarket.yesPct.toFixed(1)}%
-              </span>
-              <span style={{ fontSize: "12px", fontWeight: 600, color: "#dc2626" }}>
-                No {selectedMarket.noPct.toFixed(1)}%
-              </span>
+              {selectedMarket.isBinary ? (
+                <>
+                  <span style={{ fontSize: "12px", fontWeight: 600, color: "#16a34a" }}>
+                    {selectedMarket.options[0].name} {fmtPct(selectedMarket.options[0].price * 100)}
+                  </span>
+                  <span style={{ fontSize: "12px", fontWeight: 600, color: "#dc2626" }}>
+                    {selectedMarket.options[1].name} {fmtPct(selectedMarket.options[1].price * 100)}
+                  </span>
+                </>
+              ) : (
+                selectedMarket.options.map((opt, i) => (
+                  <span
+                    key={opt.coinId}
+                    style={{ fontSize: "12px", fontWeight: 600, color: MULTI_COLORS[i % MULTI_COLORS.length] }}
+                  >
+                    {opt.name} {fmtPct(opt.price * 100)}
+                  </span>
+                ))
+              )}
             </div>
           )}
 
           <div style={{ height: chartHeight, width: chartWidth, minHeight: 0 }}>
-            {selectedCoin && (
-              <Liveline
-                mode="candle"
-                candles={candles}
-                liveCandle={liveCandle}
-                candleWidth={3600}
-                data={ticks}
-                value={latestTick}
-                lineMode={lineMode}
-                lineData={ticks}
-                lineValue={latestTick}
-                onModeChange={(m) => setLineMode(m === "line")}
-                theme="light"
-                color={accentColor}
-                loading={loading}
-                grid
-                showValue
-                formatValue={fmtChartValue}
-                window={currentWindow}
-                onWindowChange={setCurrentWindow}
-                windows={[
-                  { label: "1d", secs: 86400 },
-                  { label: "3d", secs: 259200 },
-                  { label: "7d", secs: 604800 },
-                ]}
-              />
+            {selectedCoin && selectedMarket && (
+              selectedMarket.isBinary ? (
+                <Liveline
+                  mode="candle"
+                  candles={candles}
+                  liveCandle={liveCandle}
+                  candleWidth={3600}
+                  data={ticks}
+                  value={latestTick}
+                  lineMode={lineMode}
+                  lineData={ticks}
+                  lineValue={latestTick}
+                  onModeChange={(m) => setLineMode(m === "line")}
+                  theme="light"
+                  color={accentColor}
+                  loading={loading}
+                  grid
+                  showValue
+                  formatValue={fmtChartValue}
+                  window={currentWindow}
+                  onWindowChange={setCurrentWindow}
+                  windows={[
+                    { label: "1d", secs: 86400 },
+                    { label: "3d", secs: 259200 },
+                    { label: "7d", secs: 604800 },
+                  ]}
+                />
+              ) : (
+                <Liveline
+                  data={[]}
+                  value={0}
+                  series={multiSeries}
+                  theme="light"
+                  loading={loading}
+                  grid
+                  showValue
+                  formatValue={(v) => fmtPct(v * 100)}
+                  window={currentWindow}
+                  onWindowChange={setCurrentWindow}
+                  windows={[
+                    { label: "1d", secs: 86400 },
+                    { label: "3d", secs: 259200 },
+                    { label: "7d", secs: 604800 },
+                  ]}
+                />
+              )
             )}
           </div>
         </div>
