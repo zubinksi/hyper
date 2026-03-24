@@ -156,19 +156,19 @@ async function fetchXyzMarkets(): Promise<Market[]> {
     .slice(0, 15);
 }
 
-/** Build predict markets from testnet */
+/** Build predict (outcome) markets from testnet — HIP-4 markets have marketType === "outcome" */
 async function fetchPredictMarkets(): Promise<Market[]> {
   const [meta, ctxs] = await postInfo<[
-    { universe: { name: string }[] },
+    { universe: { name: string; marketType?: string }[] },
     { markPx: string; dayNtlVlm: string; prevDayPx: string; openInterest?: string }[]
-  ]>({ type: "metaAndAssetCtxs", dex: "predict" }, HL_TESTNET_INFO);
+  ]>({ type: "metaAndAssetCtxs" }, HL_TESTNET_INFO);
 
   return meta.universe
-    .map((asset, i): Market => {
-      const ctx = ctxs[i];
+    .map((asset, i) => ({ asset, ctx: ctxs[i] }))
+    .filter(({ asset }) => asset.marketType === "outcome")
+    .map(({ asset, ctx }): Market => {
       const price = parseFloat(ctx.markPx);
       const prev = parseFloat(ctx.prevDayPx);
-      // Strip any "predict:" prefix for display; use bare name for API calls
       const cleanName = asset.name.replace(/^predict:/, "");
       return {
         coin: cleanName,
