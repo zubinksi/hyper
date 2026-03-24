@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
+import { Stepper, useAutoPlay } from "pasito";
+import "pasito/styles.css";
 import type { CandlePoint, LivelinePoint, LivelineSeries } from "liveline";
 
 const Liveline = dynamic(
@@ -164,6 +166,7 @@ async function fetchPredictMarkets(): Promise<Market[]> {
 export default function Page() {
   const [now, setNow] = useState(() => new Date());
   const [markets, setMarkets] = useState<Market[]>([]);
+  const [activeIdx, setActiveIdx] = useState(0);
   const [selectedCoin, setSelectedCoin] = useState("");
   // Binary chart state
   const [candles, setCandles] = useState<CandlePoint[]>([]);
@@ -176,9 +179,6 @@ export default function Page() {
 
   const [loading, setLoading] = useState(true);
   const [currentWindow, setCurrentWindow] = useState(86400);
-  const [screenWidth, setScreenWidth] = useState(
-    typeof window !== "undefined" ? window.innerWidth : 1600
-  );
 
   const wsRef = useRef<WebSocket | null>(null);
   const selectedCoinRef = useRef("");
@@ -186,17 +186,27 @@ export default function Page() {
   const liveCandleRef = useRef<CandlePoint | undefined>(undefined);
   const prevCandleTimeRef = useRef(0);
 
+  const topMarkets = markets.slice(0, 6);
+
+  function handleStepChange(idx: number) {
+    setActiveIdx(idx);
+    const coin = markets[idx]?.coinId;
+    if (coin) setSelectedCoin(coin);
+  }
+
+  const { filling, fillDuration } = useAutoPlay({
+    count: topMarkets.length || 1,
+    active: activeIdx,
+    onStepChange: handleStepChange,
+    stepDuration: 5000,
+    loop: true,
+    enabled: topMarkets.length > 0,
+  });
+
   // Clock
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
-  }, []);
-
-  // Screen width
-  useEffect(() => {
-    const handler = () => setScreenWidth(window.innerWidth);
-    window.addEventListener("resize", handler);
-    return () => window.removeEventListener("resize", handler);
   }, []);
 
   // Fetch markets on mount
@@ -204,7 +214,10 @@ export default function Page() {
     fetchPredictMarkets()
       .then((all) => {
         setMarkets(all);
-        if (all.length > 0) setSelectedCoin(all[0].coinId);
+        if (all.length > 0) {
+          setSelectedCoin(all[0].coinId);
+          setActiveIdx(0);
+        }
       })
       .catch(() => setMarkets([]));
   }, []);
@@ -369,10 +382,6 @@ export default function Page() {
   }, [selectedCoin]);
 
   const selectedMarket = markets.find((m) => m.coinId === selectedCoin);
-  const isNarrow = screenWidth < 1000;
-  const sidebarWidth = isNarrow ? 180 : 300;
-  const chartWidth = isNarrow ? "90%" : "75%";
-  const chartHeight = isNarrow ? "75%" : "50%";
 
   const yesPrice = selectedMarket?.isBinary ? selectedMarket.options[0].price : 0;
   const accentColor = yesPrice < 0.5 ? "#dc2626" : "#16a34a";
@@ -385,201 +394,131 @@ export default function Page() {
         height: "100vh",
         backgroundColor: "#ffffff",
         overflow: "hidden",
+        boxSizing: "border-box",
+        padding: "12px",
       }}
     >
       {/* Clock */}
-      <div style={{ flexShrink: 0, padding: "16px 24px 0" }}>
+      <div style={{ flexShrink: 0, marginBottom: 10 }}>
         <div style={{ fontWeight: "normal", fontSize: "13px", letterSpacing: "0.04em", color: "#111" }}>
           {fmtDateTime(now)}
         </div>
       </div>
 
-      <div style={{ height: 32, flexShrink: 0 }} />
-
-      {/* Main body */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden", minHeight: 0 }}>
-
-        {/* Sidebar */}
-        <div
-          style={{
-            width: sidebarWidth,
-            flexShrink: 0,
-            padding: "8px 0 24px 24px",
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <div style={{ marginBottom: 10, paddingRight: 8 }}>
-            <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>Markets</span>
+      {/* Bordered card — 100% width */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          width: "100%",
+          boxSizing: "border-box",
+          border: "1px solid #e5e7eb",
+          borderRadius: 12,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          padding: "16px",
+        }}
+      >
+        {/* Stepper */}
+        {topMarkets.length > 0 && (
+          <div style={{ flexShrink: 0, marginBottom: 12 }}>
+            <Stepper
+              count={topMarkets.length}
+              active={activeIdx}
+              onStepClick={handleStepChange}
+              filling={filling}
+              fillDuration={fillDuration}
+            />
           </div>
+        )}
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {markets.map((m) => {
-              const isSelected = m.coinId === selectedCoin;
-              return (
-                <div
-                  key={m.coinId}
-                  onClick={() => setSelectedCoin(m.coinId)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    fontSize: "12px",
-                    cursor: "pointer",
-                    borderRadius: 4,
-                    padding: "4px 8px 4px 0",
-                    backgroundColor: "transparent",
-                    transition: "background-color 0.1s",
-                    gap: 6,
-                    userSelect: "none",
-                    fontWeight: isSelected ? 700 : 400,
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLDivElement).style.backgroundColor = "#f9fafb";
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent";
-                  }}
+        {/* Market header */}
+        {selectedMarket && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 12,
+              marginBottom: 8,
+              flexWrap: "wrap",
+              flexShrink: 0,
+            }}
+          >
+            <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>
+              {selectedMarket.question}
+            </span>
+            {selectedMarket.isBinary ? (
+              <>
+                <span style={{ fontSize: "12px", fontWeight: 600, color: "#16a34a" }}>
+                  {selectedMarket.options[0].name} {fmtPct(selectedMarket.options[0].price * 100)}
+                </span>
+                <span style={{ fontSize: "12px", fontWeight: 600, color: "#dc2626" }}>
+                  {selectedMarket.options[1].name} {fmtPct(selectedMarket.options[1].price * 100)}
+                </span>
+              </>
+            ) : (
+              selectedMarket.options.map((opt, i) => (
+                <span
+                  key={opt.coinId}
+                  style={{ fontSize: "12px", fontWeight: 600, color: MULTI_COLORS[i % MULTI_COLORS.length] }}
                 >
-                  <span
-                    style={{
-                      flex: 1,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      color: "#111",
-                    }}
-                  >
-                    {m.question}
-                  </span>
-
-                  {m.isBinary ? (
-                    // Yes% / No% for binary
-                    <>
-                      <span style={{ color: "#16a34a", fontVariantNumeric: "tabular-nums", flexShrink: 0, fontSize: "11px" }}>
-                        {fmtPct(m.options[0].price * 100)}
-                      </span>
-                      <span style={{ color: "#dc2626", fontVariantNumeric: "tabular-nums", flexShrink: 0, fontSize: "11px" }}>
-                        {fmtPct(m.options[1].price * 100)}
-                      </span>
-                    </>
-                  ) : (
-                    // Colored dots + % for multi-outcome
-                    <div style={{ display: "flex", gap: 3, flexShrink: 0, alignItems: "center" }}>
-                      {m.options.map((opt, i) => (
-                        <span
-                          key={opt.coinId}
-                          title={opt.name}
-                          style={{
-                            fontSize: "10px",
-                            color: MULTI_COLORS[i % MULTI_COLORS.length],
-                            fontVariantNumeric: "tabular-nums",
-                          }}
-                        >
-                          {Math.round(opt.price * 100)}%
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Chart area */}
-        <div
-          style={{
-            flex: 1,
-            padding: "8px 24px 24px 8px",
-            display: "flex",
-            flexDirection: "column",
-            minWidth: 0,
-          }}
-        >
-          {selectedMarket && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "baseline",
-                gap: 12,
-                marginBottom: 4,
-                flexWrap: "wrap",
-              }}
-            >
-              <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>
-                {selectedMarket.question}
-              </span>
-              {selectedMarket.isBinary ? (
-                <>
-                  <span style={{ fontSize: "12px", fontWeight: 600, color: "#16a34a" }}>
-                    {selectedMarket.options[0].name} {fmtPct(selectedMarket.options[0].price * 100)}
-                  </span>
-                  <span style={{ fontSize: "12px", fontWeight: 600, color: "#dc2626" }}>
-                    {selectedMarket.options[1].name} {fmtPct(selectedMarket.options[1].price * 100)}
-                  </span>
-                </>
-              ) : (
-                selectedMarket.options.map((opt, i) => (
-                  <span
-                    key={opt.coinId}
-                    style={{ fontSize: "12px", fontWeight: 600, color: MULTI_COLORS[i % MULTI_COLORS.length] }}
-                  >
-                    {opt.name} {fmtPct(opt.price * 100)}
-                  </span>
-                ))
-              )}
-            </div>
-          )}
-
-          <div style={{ height: chartHeight, width: chartWidth, minHeight: 0 }}>
-            {selectedCoin && selectedMarket && (
-              selectedMarket.isBinary ? (
-                <Liveline
-                  mode="candle"
-                  candles={candles}
-                  liveCandle={liveCandle}
-                  candleWidth={3600}
-                  data={ticks}
-                  value={latestTick}
-                  lineMode={lineMode}
-                  lineData={ticks}
-                  lineValue={latestTick}
-                  onModeChange={(m) => setLineMode(m === "line")}
-                  theme="light"
-                  color={accentColor}
-                  loading={loading}
-                  grid
-                  showValue
-                  formatValue={fmtChartValue}
-                  window={currentWindow}
-                  onWindowChange={setCurrentWindow}
-                  windows={[
-                    { label: "1d", secs: 86400 },
-                    { label: "3d", secs: 259200 },
-                    { label: "7d", secs: 604800 },
-                  ]}
-                />
-              ) : (
-                <Liveline
-                  data={[]}
-                  value={0}
-                  series={multiSeries}
-                  theme="light"
-                  loading={loading}
-                  grid
-                  showValue
-                  formatValue={(v) => fmtPct(v * 100)}
-                  window={currentWindow}
-                  onWindowChange={setCurrentWindow}
-                  windows={[
-                    { label: "1d", secs: 86400 },
-                    { label: "3d", secs: 259200 },
-                    { label: "7d", secs: 604800 },
-                  ]}
-                />
-              )
+                  {opt.name} {fmtPct(opt.price * 100)}
+                </span>
+              ))
             )}
           </div>
+        )}
+
+        {/* Chart */}
+        <div style={{ flex: 1, minHeight: 0, width: "100%" }}>
+          {selectedCoin && selectedMarket && (
+            selectedMarket.isBinary ? (
+              <Liveline
+                mode="candle"
+                candles={candles}
+                liveCandle={liveCandle}
+                candleWidth={3600}
+                data={ticks}
+                value={latestTick}
+                lineMode={lineMode}
+                lineData={ticks}
+                lineValue={latestTick}
+                onModeChange={(m) => setLineMode(m === "line")}
+                theme="light"
+                color={accentColor}
+                loading={loading}
+                grid
+                showValue
+                formatValue={fmtChartValue}
+                window={currentWindow}
+                onWindowChange={setCurrentWindow}
+                windows={[
+                  { label: "1d", secs: 86400 },
+                  { label: "3d", secs: 259200 },
+                  { label: "7d", secs: 604800 },
+                ]}
+              />
+            ) : (
+              <Liveline
+                data={[]}
+                value={0}
+                series={multiSeries}
+                theme="light"
+                loading={loading}
+                grid
+                showValue
+                formatValue={(v) => fmtPct(v * 100)}
+                window={currentWindow}
+                onWindowChange={setCurrentWindow}
+                windows={[
+                  { label: "1d", secs: 86400 },
+                  { label: "3d", secs: 259200 },
+                  { label: "7d", secs: 604800 },
+                ]}
+              />
+            )
+          )}
         </div>
       </div>
     </div>
