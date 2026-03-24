@@ -14,19 +14,17 @@ const HL_WS = "wss://api.hyperliquid.xyz/ws";
 const HL_TESTNET_INFO = "https://api.hyperliquid-testnet.xyz/info";
 const HL_TESTNET_WS = "wss://api.hyperliquid-testnet.xyz/ws";
 
-type MarketSource = "xyz" | "predict";
-
 interface Market {
   coin: string;
   coinId: string;
-  apiCoin: string;   // coin name used in API calls (may differ from coinId)
+  apiCoin: string;
   testnet: boolean;
-  marketType: "tradfi" | "predict";
   price: number;
   prevDayPx: number;
   change24h: number;
   volume: number;
-  openInterest?: number;
+  yesPct: number;
+  noPct: number;
 }
 
 interface HLCandle {
@@ -44,12 +42,6 @@ async function postInfo<T>(body: object, url = HL_INFO): Promise<T> {
     body: JSON.stringify(body),
   });
   return res.json();
-}
-
-function fmtSidebarPrice(p: number): string {
-  if (p >= 1000) return Math.round(p).toLocaleString("en-US");
-  if (p >= 1) return p.toFixed(2);
-  return p.toFixed(5);
 }
 
 function fmtChartValue(v: number): string {
@@ -82,81 +74,7 @@ function toCandle(c: HLCandle): CandlePoint {
   };
 }
 
-function getTimeInZone(date: Date, tz: string): { h: number; m: number; day: number } {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    hour: "numeric",
-    minute: "2-digit",
-    weekday: "short",
-    hour12: false,
-  }).formatToParts(date);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "0";
-  const rawH = get("hour");
-  const h = rawH === "24" ? 0 : parseInt(rawH);
-  const m = parseInt(get("minute"));
-  const DAY_IDX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  return { h, m, day: DAY_IDX[get("weekday")] ?? -1 };
-}
-
-function tradfiMarketStatus(date: Date): { us: string; europe: string; asia: string } {
-  const et = getTimeInZone(date, "America/New_York");
-  const etMins = et.h * 60 + et.m;
-  const usWkd = et.day >= 1 && et.day <= 5;
-  const us = !usWkd ? "Closed"
-    : etMins >= 240 && etMins < 570 ? "Pre Market"
-    : etMins >= 570 && etMins < 960 ? "Open"
-    : "Closed";
-
-  const lon = getTimeInZone(date, "Europe/London");
-  const lonMins = lon.h * 60 + lon.m;
-  const euWkd = lon.day >= 1 && lon.day <= 5;
-  const europe = !euWkd ? "Closed"
-    : lonMins >= 480 && lonMins < 1050 ? "Open"
-    : "Closed";
-
-  const tky = getTimeInZone(date, "Asia/Tokyo");
-  const tkyMins = tky.h * 60 + tky.m;
-  const asiaWkd = tky.day >= 1 && tky.day <= 5;
-  const asia = !asiaWkd ? "Closed"
-    : (tkyMins >= 540 && tkyMins < 690) || (tkyMins >= 750 && tkyMins < 930) ? "Open"
-    : "Closed";
-
-  return { us, europe, asia };
-}
-
-/** Build xyz (tradfi) markets from mainnet */
-async function fetchXyzMarkets(): Promise<Market[]> {
-  const [meta, ctxs] = await postInfo<[
-    { universe: { name: string }[] },
-    { markPx: string; dayNtlVlm: string; prevDayPx: string; openInterest?: string }[]
-  ]>({ type: "metaAndAssetCtxs", dex: "xyz" });
-
-  return meta.universe
-    .map((asset, i): Market => {
-      const ctx = ctxs[i];
-      const price = parseFloat(ctx.markPx);
-      const prev = parseFloat(ctx.prevDayPx);
-      // asset.name already contains "xyz:" prefix
-      const apiCoin = asset.name; // full name is the canonical API identifier
-      return {
-        coin: asset.name.replace(/^xyz:/, ""),
-        coinId: asset.name,
-        apiCoin,
-        testnet: false,
-        marketType: "tradfi",
-        price: isNaN(price) ? 0 : price,
-        prevDayPx: isNaN(prev) ? 0 : prev,
-        change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
-        volume: parseFloat(ctx.dayNtlVlm) || 0,
-        openInterest: ctx.openInterest ? parseFloat(ctx.openInterest) : undefined,
-      };
-    })
-    .filter((m) => m.price > 0 && m.volume > 0)
-    .sort((a, b) => b.volume - a.volume)
-    .slice(0, 15);
-}
-
-/** Build predict (outcome) markets via the outcomeMeta endpoint (testnet) */
+/** One row per outcome, collapsed Yes+No sides */
 async function fetchPredictMarkets(): Promise<Market[]> {
   type OutcomeEntry = {
     outcome: number;
@@ -166,52 +84,46 @@ async function fetchPredictMarkets(): Promise<Market[]> {
   };
   type AssetCtx = { markPx: string; dayNtlVlm: string; prevDayPx: string };
 
-  // outcomeMeta is testnet-only per docs
-  const meta = await postInfo<{ outcomes: OutcomeEntry[] }>(
-    { type: "outcomeMeta" },
-    HL_TESTNET_INFO
-  );
+  const [metaResult, spotResult] = await Promise.all([
+    postInfo<{ outcomes: OutcomeEntry[] }>({ type: "outcomeMeta" }, HL_TESTNET_INFO),
+    postInfo<[{ universe: { name: string }[] }, AssetCtx[]]>(
+      { type: "spotMetaAndAssetCtxs" }, HL_TESTNET_INFO
+    ),
+  ]);
 
-  // Fetch spot prices for outcome coins (#<encoding> format) from testnet
-  const [spotMeta, spotCtxs] = await postInfo<[
-    { universe: { name: string }[] },
-    AssetCtx[]
-  ]>({ type: "spotMetaAndAssetCtxs" }, HL_TESTNET_INFO);
-
+  const [spotMeta, spotCtxs] = spotResult;
   const priceMap = new Map<string, AssetCtx>();
   spotMeta.universe.forEach((u, i) => priceMap.set(u.name, spotCtxs[i]));
 
-  const markets: Market[] = [];
-  for (const entry of meta.outcomes) {
-    for (let side = 0; side <= 1; side++) {
-      const encoding = 10 * entry.outcome + side;
-      const coin = `#${encoding}`;
-      const sideName = entry.sideSpecs[side]?.name ?? (side === 0 ? "Yes" : "No");
-      const ctx = priceMap.get(coin);
+  return metaResult.outcomes.map((entry) => {
+    const yesEncoding = 10 * entry.outcome + 0;
+    const noEncoding = 10 * entry.outcome + 1;
+    const yesCoin = `#${yesEncoding}`;
+    const noCoin = `#${noEncoding}`;
+    const yesCtx = priceMap.get(yesCoin);
+    const noCtx = priceMap.get(noCoin);
 
-      const price = parseFloat(ctx?.markPx ?? "0");
-      const prev = parseFloat(ctx?.prevDayPx ?? "0");
+    const yesPrice = parseFloat(yesCtx?.markPx ?? "0") || 0;
+    const noPrice = parseFloat(noCtx?.markPx ?? "0") || 0;
+    const yesPrev = parseFloat(yesCtx?.prevDayPx ?? "0") || 0;
 
-      markets.push({
-        coin: `${entry.name} · ${sideName}`,
-        coinId: coin,
-        apiCoin: coin,
-        testnet: true,
-        marketType: "predict",
-        price: isNaN(price) ? 0 : price,
-        prevDayPx: isNaN(prev) ? 0 : prev,
-        change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
-        volume: parseFloat(ctx?.dayNtlVlm ?? "0") || 0,
-      });
-    }
-  }
-
-  return markets.sort((a, b) => b.volume - a.volume);
+    return {
+      coin: entry.name,
+      coinId: yesCoin,
+      apiCoin: yesCoin,
+      testnet: true,
+      price: yesPrice,
+      prevDayPx: yesPrev,
+      change24h: yesPrev && yesPrice ? ((yesPrice - yesPrev) / yesPrev) * 100 : 0,
+      volume: parseFloat(yesCtx?.dayNtlVlm ?? "0") || 0,
+      yesPct: yesPrice * 100,
+      noPct: noPrice * 100,
+    };
+  }).sort((a, b) => b.volume - a.volume);
 }
 
 export default function Page() {
   const [now, setNow] = useState(() => new Date());
-  const [source, setSource] = useState<MarketSource>("xyz");
   const [markets, setMarkets] = useState<Market[]>([]);
   const [selectedCoin, setSelectedCoin] = useState("");
   const [candles, setCandles] = useState<CandlePoint[]>([]);
@@ -227,11 +139,10 @@ export default function Page() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const selectedCoinRef = useRef("");
-  const selectedApiCoinRef = useRef(""); // bare coin name for WS message matching
+  const selectedApiCoinRef = useRef("");
   const liveCandleRef = useRef<CandlePoint | undefined>(undefined);
   const prevCandleTimeRef = useRef(0);
-  // Track testnet flag alongside selectedCoin changes (updated synchronously)
-  const selectedTestnetRef = useRef(false);
+  const selectedTestnetRef = useRef(true);
 
   // Clock
   useEffect(() => {
@@ -246,13 +157,9 @@ export default function Page() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
-  // Fetch markets when source changes
+  // Fetch predict markets on mount
   useEffect(() => {
-    setMarkets([]);
-    setSelectedCoin("");
-
-    const load = source === "xyz" ? fetchXyzMarkets() : fetchPredictMarkets();
-    load
+    fetchPredictMarkets()
       .then((all) => {
         setMarkets(all);
         if (all.length > 0) {
@@ -261,7 +168,7 @@ export default function Page() {
         }
       })
       .catch(() => setMarkets([]));
-  }, [source]);
+  }, []);
 
   // Fetch candle history when selected coin changes
   useEffect(() => {
@@ -344,6 +251,7 @@ export default function Page() {
               return {
                 ...m,
                 price: newPrice,
+                yesPct: newPrice * 100,
                 change24h: m.prevDayPx
                   ? ((newPrice - m.prevDayPx) / m.prevDayPx) * 100
                   : m.change24h,
@@ -392,13 +300,9 @@ export default function Page() {
   const selectedMarket = markets.find((m) => m.coinId === selectedCoin);
   const accentColor = selectedMarket && selectedMarket.change24h < 0 ? "#dc2626" : "#16a34a";
   const isNarrow = screenWidth < 1000;
-  const sidebarWidth = isNarrow ? 130 : 260;
+  const sidebarWidth = isNarrow ? 160 : 280;
   const chartWidth = isNarrow ? "90%" : "75%";
   const chartHeight = isNarrow ? "75%" : "50%";
-
-  const { us, europe, asia } = tradfiMarketStatus(now);
-  const statusColor = (s: string) =>
-    s === "Open" ? "#16a34a" : s === "Pre Market" ? "#d97706" : "#aaa";
 
   return (
     <div
@@ -410,22 +314,10 @@ export default function Page() {
         overflow: "hidden",
       }}
     >
-      {/* Clock + market status */}
+      {/* Clock */}
       <div style={{ flexShrink: 0, padding: "16px 24px 0" }}>
         <div style={{ fontWeight: "normal", fontSize: "13px", letterSpacing: "0.04em", color: "#111" }}>
           {fmtDateTime(now)}
-        </div>
-        <div style={{ display: "flex", gap: 20, marginTop: 6, fontSize: "11px" }}>
-          {([
-            { label: "US", status: us },
-            { label: "Europe", status: europe },
-            { label: "Asia", status: asia },
-          ] as const).map(({ label, status }) => (
-            <span key={label}>
-              <span style={{ color: "#aaa" }}>{label}</span>{" "}
-              <span style={{ color: statusColor(status) }}>{status}</span>
-            </span>
-          ))}
         </div>
       </div>
 
@@ -444,38 +336,8 @@ export default function Page() {
             flexDirection: "column",
           }}
         >
-          {/* Title + source toggle */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: 10,
-              paddingRight: 8,
-            }}
-          >
+          <div style={{ marginBottom: 10, paddingRight: 8 }}>
             <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>Markets</span>
-            <div style={{ display: "flex", gap: 2 }}>
-              {(["xyz", "predict"] as const).map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setSource(s)}
-                  style={{
-                    padding: "2px 6px",
-                    borderRadius: 3,
-                    border: "none",
-                    background: source === s ? "#111" : "transparent",
-                    color: source === s ? "#fff" : "#aaa",
-                    cursor: "pointer",
-                    fontSize: "10px",
-                    fontWeight: source === s ? 600 : 400,
-                    letterSpacing: "0.02em",
-                  }}
-                >
-                  {s === "predict" ? "Predict" : "xyz"}
-                </button>
-              ))}
-            </div>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -497,7 +359,7 @@ export default function Page() {
                     padding: "4px 8px 4px 0",
                     backgroundColor: "transparent",
                     transition: "background-color 0.1s",
-                    gap: 4,
+                    gap: 6,
                     userSelect: "none",
                     fontWeight: isSelected ? 700 : 400,
                   }}
@@ -519,24 +381,25 @@ export default function Page() {
                   >
                     {m.coin}
                   </span>
-
-                  {!isNarrow && (
-                    <span style={{ color: "#333", fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
-                      {fmtSidebarPrice(m.price)}
-                    </span>
-                  )}
-
                   <span
                     style={{
-                      width: 38,
-                      textAlign: "right",
-                      color: m.change24h >= 0 ? "#16a34a" : "#dc2626",
+                      color: "#16a34a",
                       fontVariantNumeric: "tabular-nums",
                       flexShrink: 0,
+                      fontSize: "11px",
                     }}
                   >
-                    {m.change24h >= 0 ? "+" : ""}
-                    {m.change24h.toFixed(0)}%
+                    {m.yesPct.toFixed(0)}%
+                  </span>
+                  <span
+                    style={{
+                      color: "#dc2626",
+                      fontVariantNumeric: "tabular-nums",
+                      flexShrink: 0,
+                      fontSize: "11px",
+                    }}
+                  >
+                    {m.noPct.toFixed(0)}%
                   </span>
                 </div>
               );
@@ -567,15 +430,11 @@ export default function Page() {
               <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>
                 {selectedMarket.coin}
               </span>
-              <span
-                style={{
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  color: selectedMarket.change24h >= 0 ? "#16a34a" : "#dc2626",
-                }}
-              >
-                {selectedMarket.change24h >= 0 ? "+" : ""}
-                {selectedMarket.change24h.toFixed(2)}%
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#16a34a" }}>
+                Yes {selectedMarket.yesPct.toFixed(1)}%
+              </span>
+              <span style={{ fontSize: "12px", fontWeight: 600, color: "#dc2626" }}>
+                No {selectedMarket.noPct.toFixed(1)}%
               </span>
             </div>
           )}
