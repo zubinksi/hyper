@@ -156,12 +156,17 @@ async function fetchXyzMarkets(): Promise<Market[]> {
     .slice(0, 15);
 }
 
-/** Build predict (outcome) markets from testnet — HIP-4 markets have marketType === "outcome" */
+/** Build predict (outcome) markets from testnet — HIP-4 markets are spot tokens with marketType === "outcome" */
 async function fetchPredictMarkets(): Promise<Market[]> {
+  // Outcome markets are spot-based (HIP-4); they appear in spotMetaAndAssetCtxs
   const [meta, ctxs] = await postInfo<[
-    { universe: { name: string; marketType?: string }[] },
-    { markPx: string; dayNtlVlm: string; prevDayPx: string; openInterest?: string }[]
-  ]>({ type: "metaAndAssetCtxs" }, HL_TESTNET_INFO);
+    { universe: { name: string; marketType?: string }[]; tokens: unknown[] },
+    { markPx: string; dayNtlVlm: string; prevDayPx: string }[]
+  ]>({ type: "spotMetaAndAssetCtxs" }, HL_TESTNET_INFO);
+
+  console.log("[predict] spotMetaAndAssetCtxs universe sample:", meta.universe.slice(0, 5));
+  const outcomeMarkets = meta.universe.filter((a) => a.marketType === "outcome");
+  console.log("[predict] outcome markets found:", outcomeMarkets.length, outcomeMarkets.slice(0, 3));
 
   return meta.universe
     .map((asset, i) => ({ asset, ctx: ctxs[i] }))
@@ -180,7 +185,6 @@ async function fetchPredictMarkets(): Promise<Market[]> {
         prevDayPx: isNaN(prev) ? 0 : prev,
         change24h: prev && price ? ((price - prev) / prev) * 100 : 0,
         volume: parseFloat(ctx.dayNtlVlm) || 0,
-        openInterest: ctx.openInterest ? parseFloat(ctx.openInterest) : undefined,
       };
     })
     .filter((m) => m.price > 0)
