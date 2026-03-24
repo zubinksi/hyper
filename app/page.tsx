@@ -162,26 +162,37 @@ async function fetchPredictMarkets(): Promise<Market[]> {
   type UniverseItem = Record<string, unknown> & { name: string };
   type MetaCtxs = [{ universe: UniverseItem[] }, AssetCtx[]];
 
-  // Probe mainnet spotMeta for outcome/predict markets
+  // Probe 1: metaAndAssetCtxs without dex (default perp meta — check for predict flags)
   try {
-    const raw = await postInfo<{ universe: UniverseItem[]; tokens: UniverseItem[] }>({ type: "spotMeta" }, HL_INFO);
+    const [meta] = await postInfo<[{ universe: UniverseItem[] }, unknown[]]>(
+      { type: "metaAndAssetCtxs" }, HL_INFO
+    );
+    const suspects = meta.universe.filter((u) =>
+      JSON.stringify(u).match(/predict|outcome|binary|isPredict|marketType/i)
+    );
+    console.log(`[predict] default meta suspects: ${suspects.length}`, suspects.slice(0, 5));
+    if (meta.universe[0]) console.log("[predict] default meta keys:", Object.keys(meta.universe[0]));
+  } catch (e) { console.log("[predict] default meta error:", e); }
 
-    // Tokens with non-null fullName are likely outcome tokens
-    const tokens = raw.tokens ?? [];
-    const withFullName = tokens.filter((t) => (t as any).fullName != null);
-    console.log(`[predict] mainnet tokens with fullName: ${withFullName.length}`, withFullName);
+  // Probe 2: spotMetaAndAssetCtxs — check full token/universe fields
+  try {
+    const [spotMeta] = await postInfo<[{ universe: UniverseItem[]; tokens: UniverseItem[] }, unknown[]]>(
+      { type: "spotMetaAndAssetCtxs" }, HL_INFO
+    );
+    const { universe = [], tokens = [] } = spotMeta;
+    if (tokens[0]) console.log("[predict] spot token keys:", Object.keys(tokens[0]));
+    if (universe[0]) console.log("[predict] spot universe keys:", Object.keys(universe[0]));
+    const tokenSuspects = tokens.filter((t) => JSON.stringify(t).match(/predict|outcome|binary|isPredict/i));
+    console.log(`[predict] spot token suspects: ${tokenSuspects.length}`, tokenSuspects.slice(0, 5));
+    const uniSuspects = universe.filter((u) => JSON.stringify(u).match(/predict|outcome|binary|isPredict/i));
+    console.log(`[predict] spot universe suspects: ${uniSuspects.length}`, uniSuspects.slice(0, 5));
+  } catch (e) { console.log("[predict] spotMetaAndAssetCtxs error:", e); }
 
-    // Universe: non-@N named markets
-    const universe = raw.universe ?? [];
-    const namedMarkets = universe.filter((m) => !/^@\d+$/.test(m.name));
-    console.log(`[predict] mainnet named markets: ${namedMarkets.length}`, namedMarkets);
-
-    // Any token where deployerTradingFeeShare > 0 (outcome markets charge a fee)
-    const withFee = tokens.filter((t) => parseFloat((t as any).deployerTradingFeeShare ?? "0") > 0);
-    console.log(`[predict] mainnet tokens with fee: ${withFee.length}`, withFee.slice(0, 5));
-  } catch (e) {
-    console.log("[predict] mainnet spotMeta probe error:", e);
-  }
+  // Probe 3: metaAndAssetCtxs with dex:"predict"
+  try {
+    const r = await postInfo<unknown>({ type: "metaAndAssetCtxs", dex: "predict" }, HL_INFO);
+    console.log("[predict] dex=predict response:", r);
+  } catch (e) { console.log("[predict] dex=predict error:", e); }
 
   return [];
 }
