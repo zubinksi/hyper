@@ -162,30 +162,26 @@ async function fetchPredictMarkets(): Promise<Market[]> {
   type UniverseItem = Record<string, unknown> & { name: string };
   type MetaCtxs = [{ universe: UniverseItem[] }, AssetCtx[]];
 
-  // Probe all candidate endpoints to find where outcome/predict markets live
-  const probes: [string, object, string][] = [
-    ["meta(testnet)",           { type: "meta" },                        HL_TESTNET_INFO],
-    ["dex:predict(testnet)",    { type: "metaAndAssetCtxs", dex: "predict" }, HL_TESTNET_INFO],
-    ["spotMeta(testnet)",       { type: "spotMeta" },                    HL_TESTNET_INFO],
-    ["spotMeta(mainnet)",       { type: "spotMeta" },                    HL_INFO],
-  ];
+  // Probe spotMeta tokens array and look for non-standard universe names
+  try {
+    const raw = await postInfo<{ universe: UniverseItem[]; tokens: UniverseItem[] }>({ type: "spotMeta" }, HL_TESTNET_INFO);
 
-  for (const [label, body, url] of probes) {
-    try {
-      const raw = await postInfo<unknown>(body, url);
-      const arr = Array.isArray(raw) ? raw : [raw];
-      const meta = arr[0] as Record<string, unknown>;
-      const u = (meta.universe ?? []) as UniverseItem[];
-      const allKeys = new Set<string>();
-      u.forEach((a) => Object.keys(a).forEach((k) => allKeys.add(k)));
-      const suspects = u.filter((a) =>
-        Object.values(a).some((v) => typeof v === "string" && /outcome|predict|binary/i.test(v))
-      );
-      console.log(`[predict] ${label}: ${u.length} items | keys: ${[...allKeys].join(",")} | suspects: ${suspects.length}`, suspects.slice(0, 2));
-      if (u.length > 0 && u.length < 20) console.log(`[predict] ${label} first item:`, u[0]);
-    } catch (e) {
-      console.log(`[predict] ${label}: error`, e);
-    }
+    // Check tokens array
+    const tokens = raw.tokens ?? [];
+    const tokenKeys = new Set<string>();
+    tokens.forEach((t) => Object.keys(t).forEach((k) => tokenKeys.add(k)));
+    const tokenSuspects = tokens.filter((t) =>
+      Object.values(t).some((v) => typeof v === "string" && /outcome|predict|binary|yes|no/i.test(v))
+    );
+    console.log(`[predict] spotMeta tokens: ${tokens.length} items | keys: ${[...tokenKeys].join(",")} | suspects: ${tokenSuspects.length}`, tokenSuspects.slice(0, 3));
+    if (tokens.length > 0) console.log("[predict] first token:", tokens[0]);
+
+    // Check universe for non-@N names (outcome markets have human-readable names)
+    const universe = raw.universe ?? [];
+    const namedMarkets = universe.filter((m) => !/^@\d+$/.test(m.name));
+    console.log(`[predict] spotMeta named markets (non-@N): ${namedMarkets.length}`, namedMarkets.slice(0, 5));
+  } catch (e) {
+    console.log("[predict] spotMeta probe error:", e);
   }
 
   return [];
