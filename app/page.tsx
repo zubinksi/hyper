@@ -173,13 +173,12 @@ async function fetchPredictMarkets(): Promise<Market[]> {
     const tokenSuspects = tokens.filter((t) =>
       Object.values(t).some((v) => typeof v === "string" && /outcome|predict|binary|yes|no/i.test(v))
     );
-    console.log(`[predict] spotMeta tokens: ${tokens.length} items | keys: ${[...tokenKeys].join(",")} | suspects: ${tokenSuspects.length}`, tokenSuspects.slice(0, 3));
-    if (tokens.length > 0) console.log("[predict] first token:", tokens[0]);
+    console.log(`[predict] suspect tokens ALL:`, tokenSuspects);
 
-    // Check universe for non-@N names (outcome markets have human-readable names)
+    // Check universe for non-@N names
     const universe = raw.universe ?? [];
     const namedMarkets = universe.filter((m) => !/^@\d+$/.test(m.name));
-    console.log(`[predict] spotMeta named markets (non-@N): ${namedMarkets.length}`, namedMarkets.slice(0, 5));
+    console.log(`[predict] named markets ALL:`, namedMarkets);
   } catch (e) {
     console.log("[predict] spotMeta probe error:", e);
   }
