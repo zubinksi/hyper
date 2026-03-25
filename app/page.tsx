@@ -122,7 +122,7 @@ export default function Page() {
   // Fetch markets
   useEffect(() => {
     fetchPredictMarkets()
-      .then((all) => {
+      .then(({ markets: all }) => {
         setMarkets(all);
         if (all.length > 0) {
           setSelectedCoin(all[0].coinId);

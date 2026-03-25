@@ -55,7 +55,6 @@ export function fmtVolume(v: number): string {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function volOf(ctx: Record<string, any> | undefined): number {
   if (!ctx) return 0;
-  // Try the most common field names for volume
   for (const key of ["dayNtlVlm", "volume", "vol", "vlm", "notionalVolume"]) {
     const v = ctx[key];
     if (v !== undefined && v !== null) {
@@ -97,7 +96,13 @@ function parseRecurringName(description: string): string | null {
   return `${underlying} above ${priceStr} on ${MONTHS[monthIdx]} ${day} at ${h12}:${mm} ${ampm}?`;
 }
 
-export async function fetchPredictMarkets(): Promise<Market[]> {
+export interface MarketsResult {
+  markets: Market[];
+  /** coinId → index in spotMeta.universe (needed for order placement) */
+  spotIndexMap: Record<string, number>;
+}
+
+export async function fetchPredictMarkets(): Promise<MarketsResult> {
   type OutcomeEntry = {
     outcome: number;
     name: string;
@@ -117,7 +122,11 @@ export async function fetchPredictMarkets(): Promise<Market[]> {
     postInfo<[{ universe: { name: string }[] }, AssetCtx[]]>({ type: "spotMetaAndAssetCtxs" }),
   ]);
 
-  // Debug: log raw structure for volume field identification
+  // Build spot index map: coinId → universe index
+  const spotIndexMap: Record<string, number> = {};
+  spotMeta.universe.forEach((u, i) => { spotIndexMap[u.name] = i; });
+
+  // Debug: log first prediction market ctx for volume field identification
   if (spotCtxs.length > 0) {
     const predictionSample = spotMeta.universe
       .map((u, i) => ({ name: u.name, ctx: spotCtxs[i] }))
@@ -192,5 +201,8 @@ export async function fetchPredictMarkets(): Promise<Market[]> {
     });
   }
 
-  return markets.sort((a, b) => b.volume - a.volume);
+  return {
+    markets: markets.sort((a, b) => b.volume - a.volume),
+    spotIndexMap,
+  };
 }
