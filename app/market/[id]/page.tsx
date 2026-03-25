@@ -61,15 +61,9 @@ function useWallet() {
       }
 
       // 2. Fall back to WalletConnect
-      const projectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
-      if (!projectId) {
-        setState((s) => ({
-          ...s,
-          connecting: false,
-          error: "No injected wallet found. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID to enable WalletConnect.",
-        }));
-        return;
-      }
+      const projectId =
+        process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ||
+        "ed1c8661cd48e06fa3397987e8db2281";
 
       const { default: EthereumProvider } = await import(
         "@walletconnect/ethereum-provider"
