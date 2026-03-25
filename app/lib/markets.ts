@@ -122,22 +122,30 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
     postInfo<[{ universe: { name: string }[] }, AssetCtx[]]>({ type: "spotMetaAndAssetCtxs" }),
   ]);
 
-  // Build spot index map: coinId → universe index
+  // Build both maps with normalized names.
+  // The spot universe uses pair names like "#20490/USDC"; prediction market
+  // lookups use just "#20490", so we index by both forms.
   const spotIndexMap: Record<string, number> = {};
-  spotMeta.universe.forEach((u, i) => { spotIndexMap[u.name] = i; });
-
-  // Debug: log first prediction market ctx for volume field identification
-  if (spotCtxs.length > 0) {
-    const predictionSample = spotMeta.universe
-      .map((u, i) => ({ name: u.name, ctx: spotCtxs[i] }))
-      .find((x) => x.name.startsWith("#"));
-    if (predictionSample) {
-      console.log("[prediction ctx sample]", predictionSample.name, JSON.stringify(predictionSample.ctx));
-    }
-  }
-
   const priceMap = new Map<string, AssetCtx>();
-  spotMeta.universe.forEach((u, i) => priceMap.set(u.name, spotCtxs[i]));
+
+  spotMeta.universe.forEach((u, i) => {
+    spotIndexMap[u.name] = i;
+    priceMap.set(u.name, spotCtxs[i]);
+    // Also map by the base token name (everything before the first "/")
+    const base = u.name.split("/")[0];
+    if (base !== u.name) {
+      spotIndexMap[base] = i;
+      priceMap.set(base, spotCtxs[i]);
+    }
+  });
+
+  // Debug: log first prediction market ctx to identify volume field
+  const predSample = spotMeta.universe
+    .map((u, i) => ({ name: u.name, ctx: spotCtxs[i] }))
+    .find((x) => x.name.startsWith("#"));
+  if (predSample) {
+    console.log("[prediction ctx sample]", predSample.name, JSON.stringify(predSample.ctx));
+  }
 
   const outcomeById = new Map<number, OutcomeEntry>();
   for (const e of meta.outcomes) outcomeById.set(e.outcome, e);
