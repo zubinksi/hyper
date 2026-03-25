@@ -97,6 +97,20 @@ function parseRecurringName(description: string): string | null {
   return `${underlying} above ${priceStr} on ${MONTHS[monthIdx]} ${day} at ${h12}:${mm} ${ampm}?`;
 }
 
+/** Returns true if the recurring market's expiry has already passed. */
+function isRecurringExpired(description: string): boolean {
+  const parts: Record<string, string> = {};
+  for (const part of description.split("|")) {
+    const sep = part.indexOf(":");
+    if (sep > 0) parts[part.slice(0, sep)] = part.slice(sep + 1);
+  }
+  if (parts["class"] !== "priceBinary") return false;
+  const m = parts["expiry"]?.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/);
+  if (!m) return false;
+  const expiryMs = Date.UTC(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]), parseInt(m[4]), parseInt(m[5]));
+  return expiryMs < Date.now();
+}
+
 export interface MarketsResult {
   markets: Market[];
   /** coinId → index in spotMeta.universe (needed for order placement) */
@@ -195,6 +209,8 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
 
   for (const entry of meta.outcomes) {
     if (claimedIds.has(entry.outcome)) continue;
+    // Skip expired recurring markets — only show the currently active version
+    if (entry.name === "Recurring" && entry.description && isRecurringExpired(entry.description)) continue;
 
     const enc0 = 10 * entry.outcome;
     const enc1 = 10 * entry.outcome + 1;
