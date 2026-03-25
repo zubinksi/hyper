@@ -16,6 +16,7 @@ export interface Market {
   volume: number;
   options: OutcomeOption[];
   isBinary: boolean;
+  description?: string;
 }
 
 export interface HLCandle {
@@ -113,6 +114,7 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
     name: string;
     namedOutcomes: number[];
     fallbackOutcome: number;
+    description?: string;
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type AssetCtx = Record<string, any>;
@@ -187,6 +189,7 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
       volume: totalVolume,
       isBinary: false,
       options,
+      description: q.description,
     });
   }
 
@@ -207,6 +210,11 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
         ? parseRecurringName(entry.description) ?? entry.name
         : entry.name;
 
+    // Show description only if it's human-readable (not the machine-readable recurring format)
+    const desc = entry.description && !entry.description.startsWith("class:")
+      ? entry.description
+      : undefined;
+
     markets.push({
       question,
       coinId: `#${enc0}`,
@@ -217,6 +225,7 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
         { name: entry.sideSpecs[0]?.name ?? "Yes", coinId: `#${enc0}`, price: price0 },
         { name: entry.sideSpecs[1]?.name ?? "No",  coinId: `#${enc1}`, price: price1 },
       ],
+      description: desc,
     });
   }
 

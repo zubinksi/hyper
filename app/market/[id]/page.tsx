@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { use } from "react";
@@ -69,16 +69,25 @@ function TradingPanel({
   walletAddress,
   walletProvider,
   onConnectWallet,
+  side,
+  setSide,
+  selectedOutcomeIdx,
+  setSelectedOutcomeIdx,
+  selectedSide,
+  setSelectedSide,
 }: {
   market: Market;
   spotIndexMap: Record<string, number>;
   walletAddress: string | null;
   walletProvider: object | null;
   onConnectWallet: () => void;
+  side: "buy" | "sell";
+  setSide: (s: "buy" | "sell") => void;
+  selectedOutcomeIdx: number;
+  setSelectedOutcomeIdx: (i: number) => void;
+  selectedSide: "yes" | "no";
+  setSelectedSide: (s: "yes" | "no") => void;
 }) {
-  const [side, setSide] = useState<"buy" | "sell">("buy");
-  const [selectedOutcomeIdx, setSelectedOutcomeIdx] = useState(0);
-  const [selectedSide, setSelectedSide] = useState<"yes" | "no">("yes");
   const [quantity, setQuantity] = useState("");
   const [tradeStatus, setTradeStatus] = useState<TradeStatus>("idle");
   const [tradeMsg, setTradeMsg] = useState("");
@@ -403,6 +412,143 @@ function TradingPanel({
   );
 }
 
+/* ─── Market Details ─────────────────────────────────────────── */
+
+function MarketDetails({ description }: { description?: string }) {
+  if (!description) return null;
+  return (
+    <div
+      style={{
+        padding: "14px 16px",
+        borderTop: "1px solid #f3f4f6",
+        fontSize: 13,
+        color: "#374151",
+        lineHeight: 1.6,
+      }}
+    >
+      {description}
+    </div>
+  );
+}
+
+/* ─── Outcome Rows ───────────────────────────────────────────── */
+
+function OutcomeRows({
+  market,
+  selectedOutcomeIdx,
+  selectedSide,
+  onSelect,
+}: {
+  market: Market;
+  selectedOutcomeIdx: number;
+  selectedSide: "yes" | "no";
+  onSelect: (outcomeIdx: number, side: "yes" | "no") => void;
+}) {
+  const rows = market.isBinary
+    ? [{ name: market.options[0].name, yesPrice: market.options[0].price, noPrice: market.options[1].price, idx: 0 }]
+    : market.options.map((opt, i) => ({
+        name: opt.name,
+        yesPrice: opt.price,
+        noPrice: opt.price > 0 ? 1 - opt.price : 0,
+        idx: i,
+      }));
+
+  return (
+    <div style={{ borderTop: "1px solid #f3f4f6" }}>
+      {rows.map((row, i) => {
+        const yesActive = selectedOutcomeIdx === row.idx && selectedSide === "yes";
+        const noActive  = selectedOutcomeIdx === row.idx && selectedSide === "no";
+        const yesCents  = (row.yesPrice * 100).toFixed(row.yesPrice < 0.1 ? 1 : 0);
+        const noCents   = (row.noPrice  * 100).toFixed(row.noPrice  < 0.1 ? 1 : 0);
+        const pctStr    = `${(row.yesPrice * 100).toFixed(1)}%`;
+
+        return (
+          <div
+            key={row.idx}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              padding: "10px 16px",
+              borderTop: i === 0 ? "none" : "1px solid #f3f4f6",
+              gap: 12,
+            }}
+          >
+            {/* Name */}
+            <span
+              style={{
+                fontWeight: 600,
+                fontSize: 13,
+                color: "#111",
+                flex: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {row.name}
+            </span>
+
+            {/* Percentage */}
+            <span
+              style={{
+                fontWeight: 700,
+                fontSize: 15,
+                color: "#111",
+                flexShrink: 0,
+                minWidth: 44,
+                textAlign: "right",
+              }}
+            >
+              {pctStr}
+            </span>
+
+            {/* Buy Yes button */}
+            <button
+              onClick={() => onSelect(row.idx, "yes")}
+              style={{
+                padding: "7px 12px",
+                borderRadius: 8,
+                border: `1px solid ${yesActive ? "#16a34a" : "#bbf7d0"}`,
+                background: yesActive ? "#16a34a" : "#f0fdf4",
+                color: yesActive ? "#fff" : "#16a34a",
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                flexShrink: 0,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Buy Yes <span style={{ fontWeight: 700 }}>{yesCents}¢</span>
+            </button>
+
+            {/* Buy No button */}
+            <button
+              onClick={() => onSelect(row.idx, "no")}
+              style={{
+                padding: "7px 12px",
+                borderRadius: 8,
+                border: `1px solid ${noActive ? "#dc2626" : "#fecaca"}`,
+                background: noActive ? "#dc2626" : "#fef2f2",
+                color: noActive ? "#fff" : "#dc2626",
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                flexShrink: 0,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Buy No <span style={{ fontWeight: 700 }}>{noCents}¢</span>
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ─── Market Page ────────────────────────────────────────────── */
 
 export default function MarketPage({ params }: { params: Promise<{ id: string }> }) {
@@ -420,6 +566,19 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
   const [multiSeries, setMultiSeries] = useState<LivelineSeries[]>([]);
 
   const wallet = useWallet();
+
+  // Trading panel state (lifted so OutcomeRows can control it)
+  const [tradeSide, setTradeSide] = useState<"buy" | "sell">("buy");
+  const [tradeOutcomeIdx, setTradeOutcomeIdx] = useState(0);
+  const [tradeYesNo, setTradeYesNo] = useState<"yes" | "no">("yes");
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const handleOutcomeSelect = useCallback((outcomeIdx: number, side: "yes" | "no") => {
+    setTradeSide("buy");
+    setTradeOutcomeIdx(outcomeIdx);
+    setTradeYesNo(side);
+    panelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
 
   const wsRef             = useRef<WebSocket | null>(null);
   const selectedCoinRef   = useRef(coinId);
@@ -787,10 +946,23 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
               ))}
             </div>
           </div>
+
+          {/* Market description */}
+          {market && <MarketDetails description={market.description} />}
+
+          {/* Outcome rows */}
+          {market && (
+            <OutcomeRows
+              market={market}
+              selectedOutcomeIdx={tradeOutcomeIdx}
+              selectedSide={tradeYesNo}
+              onSelect={handleOutcomeSelect}
+            />
+          )}
         </div>
 
         {/* Trading panel column */}
-        <div className="market-panel-col" style={{ padding: "16px" }}>
+        <div ref={panelRef} className="market-panel-col" style={{ padding: "16px" }}>
           {market ? (
             <TradingPanel
               market={market}
@@ -798,6 +970,12 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
               walletAddress={wallet.address}
               walletProvider={wallet.provider}
               onConnectWallet={wallet.connect}
+              side={tradeSide}
+              setSide={setTradeSide}
+              selectedOutcomeIdx={tradeOutcomeIdx}
+              setSelectedOutcomeIdx={setTradeOutcomeIdx}
+              selectedSide={tradeYesNo}
+              setSelectedSide={setTradeYesNo}
             />
           ) : (
             <div

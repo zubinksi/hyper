@@ -52,6 +52,12 @@ body {
   }
 }
 
+/* Outcome rows: allow horizontal scroll on very small screens */
+.outcome-rows-row {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
 /* Market detail page layout */
 .market-layout {
   flex-direction: column;
