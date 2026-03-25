@@ -14,3 +14,27 @@ body {
   color: #171717;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 }
+
+/* Pasito stepper: transparent bg/border, 2× dot & active-width */
+.pasito-theme {
+  --pill-dot-size: 16px;
+  --pill-active-width: 48px;
+  --pill-container-bg: transparent;
+  --pill-container-border: transparent;
+}
+
+/* Liveline multi-series wrapper: hide the series toggle chips row */
+.ll-multi > div:first-of-type {
+  display: none !important;
+}
+
+/* Chart area heights — 20% smaller on mobile */
+.chart-area {
+  height: 45vh;
+}
+
+@media (max-width: 768px) {
+  .chart-area {
+    height: 36vh;
+  }
+}

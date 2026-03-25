@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { Stepper, useAutoPlay } from "pasito";
 import "pasito/styles.css";
-import type { CandlePoint, LivelinePoint, LivelineSeries } from "liveline";
+import type { LivelinePoint, LivelineSeries } from "liveline";
 
 const Liveline = dynamic(
   () => import("liveline").then((m) => ({ default: m.Liveline })),
@@ -16,19 +16,25 @@ const HL_TESTNET_WS = "wss://api.hyperliquid-testnet.xyz/ws";
 
 const MULTI_COLORS = ["#3b82f6", "#f97316", "#8b5cf6", "#10b981", "#f59e0b", "#ec4899"];
 
+const WINDOWS = [
+  { label: "1d", secs: 86400 },
+  { label: "3d", secs: 259200 },
+  { label: "7d", secs: 604800 },
+];
+
 interface OutcomeOption {
   name: string;
   coinId: string;
-  price: number; // 0–1 probability
+  price: number;
 }
 
 interface Market {
-  question: string;  // display label
-  coinId: string;    // primary coin (first option's yes-side)
+  question: string;
+  coinId: string;
   testnet: boolean;
   volume: number;
   options: OutcomeOption[];
-  isBinary: boolean; // two-option yes/no market
+  isBinary: boolean;
 }
 
 interface HLCandle {
@@ -58,6 +64,12 @@ function fmtPct(v: number): string {
   return `${v.toFixed(1)}%`;
 }
 
+function fmtVolume(v: number): string {
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
+  return `$${v.toFixed(0)}`;
+}
+
 function fmtDateTime(d: Date): string {
   const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const MONTHS = [
@@ -70,16 +82,6 @@ function fmtDateTime(d: Date): string {
   const mm = d.getMinutes().toString().padStart(2, "0");
   const ss = d.getSeconds().toString().padStart(2, "0");
   return `${DAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()} ${hh}:${mm}:${ss}${ampm}`;
-}
-
-function toCandle(c: HLCandle): CandlePoint {
-  return {
-    time: Math.floor(c.t / 1000),
-    open: parseFloat(c.o),
-    high: parseFloat(c.h),
-    low: parseFloat(c.l),
-    close: parseFloat(c.c),
-  };
 }
 
 async function fetchPredictMarkets(): Promise<Market[]> {
@@ -109,7 +111,6 @@ async function fetchPredictMarkets(): Promise<Market[]> {
   const claimedIds = new Set<number>();
   const markets: Market[] = [];
 
-  // ── Grouped markets from questions[] ──────────────────────────────────
   for (const q of (meta.questions ?? [])) {
     const ids = [...q.namedOutcomes, q.fallbackOutcome].filter((id) => id != null);
     for (const id of ids) claimedIds.add(id);
@@ -134,7 +135,6 @@ async function fetchPredictMarkets(): Promise<Market[]> {
     });
   }
 
-  // ── Standalone (unclaimed) outcomes ───────────────────────────────────
   for (const entry of meta.outcomes) {
     if (claimedIds.has(entry.outcome)) continue;
 
@@ -168,12 +168,9 @@ export default function Page() {
   const [markets, setMarkets] = useState<Market[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
   const [selectedCoin, setSelectedCoin] = useState("");
-  // Binary chart state
-  const [candles, setCandles] = useState<CandlePoint[]>([]);
-  const [liveCandle, setLiveCandle] = useState<CandlePoint | undefined>();
+  // Line chart state
   const [ticks, setTicks] = useState<LivelinePoint[]>([]);
   const [latestTick, setLatestTick] = useState(0);
-  const [lineMode, setLineMode] = useState(true);
   // Multi-outcome chart state
   const [multiSeries, setMultiSeries] = useState<LivelineSeries[]>([]);
 
@@ -183,8 +180,8 @@ export default function Page() {
   const wsRef = useRef<WebSocket | null>(null);
   const selectedCoinRef = useRef("");
   const selectedApiCoinRef = useRef("");
-  const liveCandleRef = useRef<CandlePoint | undefined>(undefined);
   const prevCandleTimeRef = useRef(0);
+  const latestTickRef = useRef(0);
 
   const topMarkets = markets.slice(0, 6);
 
@@ -231,12 +228,10 @@ export default function Page() {
     if (!market) return;
 
     setLoading(true);
-    setCandles([]);
     setTicks([]);
-    setLiveCandle(undefined);
     setMultiSeries([]);
-    liveCandleRef.current = undefined;
     prevCandleTimeRef.current = 0;
+    latestTickRef.current = 0;
 
     const endTime = Date.now();
     const startTime = endTime - 8 * 24 * 60 * 60 * 1000;
@@ -249,22 +244,18 @@ export default function Page() {
         { type: "candleSnapshot", req: { coin: apiCoin, interval: "1h", startTime, endTime } }
       ).then((data) => {
         if (!data?.length || selectedCoinRef.current !== selectedCoin) return;
-        const pts = data.map(toCandle);
-        const live = pts[pts.length - 1];
-        setCandles(pts.slice(0, -1));
-        setLiveCandle(live);
-        liveCandleRef.current = live;
-        prevCandleTimeRef.current = live.time;
         const tickPts = data.map((c) => ({
           time: Math.floor(c.t / 1000),
           value: parseFloat(c.c),
         }));
+        const last = tickPts[tickPts.length - 1];
         setTicks(tickPts);
-        setLatestTick(live.close);
+        setLatestTick(last.value);
+        latestTickRef.current = last.value;
+        prevCandleTimeRef.current = last.time;
         setLoading(false);
       });
     } else {
-      // Fetch candles for all options in parallel
       Promise.all(
         market.options.map((opt) =>
           postInfo<HLCandle[]>(
@@ -303,7 +294,6 @@ export default function Page() {
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ method: "subscribe", subscription: { type: "allMids" } }));
-      // Only subscribe to candle for binary markets
       if (market?.isBinary) {
         ws.send(JSON.stringify({
           method: "subscribe",
@@ -319,7 +309,6 @@ export default function Page() {
         if (msg.channel === "allMids" && msg.data?.mids) {
           const mids = msg.data.mids as Record<string, string>;
 
-          // Update market option prices
           setMarkets((prev) =>
             prev.map((m) => {
               const updatedOptions = m.options.map((opt) => {
@@ -327,7 +316,6 @@ export default function Page() {
                 if (!raw) return opt;
                 return { ...opt, price: parseFloat(raw) };
               });
-              // For binary: if yes has price, infer no as complement
               if (m.isBinary && updatedOptions[0].price > 0 && !mids[updatedOptions[1].coinId]) {
                 updatedOptions[1] = { ...updatedOptions[1], price: 1 - updatedOptions[0].price };
               }
@@ -335,7 +323,6 @@ export default function Page() {
             })
           );
 
-          // Update multi-series live values
           setMultiSeries((prev) =>
             prev.map((s) => {
               const raw = mids[s.id];
@@ -348,23 +335,19 @@ export default function Page() {
           const c = msg.data as HLCandle & { s: string };
           if (c.s !== selectedApiCoinRef.current) return;
 
-          const pt = toCandle(c);
-          const nowTime = pt.time;
+          const nowTime = Math.floor(c.t / 1000);
+          const closeVal = parseFloat(c.c);
 
-          if (prevCandleTimeRef.current > 0 && nowTime > prevCandleTimeRef.current) {
-            const committed = liveCandleRef.current;
-            if (committed) setCandles((prev) => [...prev, committed].slice(-500));
-          }
-
-          prevCandleTimeRef.current = nowTime;
-          liveCandleRef.current = pt;
-          setLiveCandle(pt);
-          setLatestTick(pt.close);
+          setLatestTick(closeVal);
+          latestTickRef.current = closeVal;
 
           setTicks((prev) => {
-            const tick: LivelinePoint = { time: nowTime, value: pt.close };
+            const tick: LivelinePoint = { time: nowTime, value: closeVal };
             if (prev.length > 0 && prev[prev.length - 1].time >= nowTime) {
               return [...prev.slice(0, -1), tick];
+            }
+            if (prevCandleTimeRef.current > 0 && nowTime > prevCandleTimeRef.current) {
+              prevCandleTimeRef.current = nowTime;
             }
             return [...prev.slice(-500), tick];
           });
@@ -382,7 +365,6 @@ export default function Page() {
   }, [selectedCoin]);
 
   const selectedMarket = markets.find((m) => m.coinId === selectedCoin);
-
   const yesPrice = selectedMarket?.isBinary ? selectedMarket.options[0].price : 0;
   const accentColor = yesPrice < 0.5 ? "#dc2626" : "#16a34a";
 
@@ -391,9 +373,8 @@ export default function Page() {
       style={{
         display: "flex",
         flexDirection: "column",
-        height: "100vh",
+        minHeight: "100vh",
         backgroundColor: "#ffffff",
-        overflow: "hidden",
         boxSizing: "border-box",
         padding: "12px",
       }}
@@ -405,11 +386,9 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Bordered card — 100% width */}
+      {/* Bordered chart card */}
       <div
         style={{
-          flex: 1,
-          minHeight: 0,
           width: "100%",
           boxSizing: "border-box",
           border: "1px solid #e5e7eb",
@@ -417,22 +396,8 @@ export default function Page() {
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",
-          padding: "16px",
         }}
       >
-        {/* Stepper */}
-        {topMarkets.length > 0 && (
-          <div style={{ flexShrink: 0, marginBottom: 12 }}>
-            <Stepper
-              count={topMarkets.length}
-              active={activeIdx}
-              onStepClick={handleStepChange}
-              filling={filling}
-              fillDuration={fillDuration}
-            />
-          </div>
-        )}
-
         {/* Market header */}
         {selectedMarket && (
           <div
@@ -440,12 +405,12 @@ export default function Page() {
               display: "flex",
               alignItems: "baseline",
               gap: 12,
-              marginBottom: 8,
               flexWrap: "wrap",
               flexShrink: 0,
+              padding: "14px 16px 10px",
             }}
           >
-            <span style={{ fontWeight: "bold", fontSize: "13px", color: "#111" }}>
+            <span style={{ fontWeight: "bold", fontSize: "15.6px", color: "#111" }}>
               {selectedMarket.question}
             </span>
             {selectedMarket.isBinary ? (
@@ -471,20 +436,12 @@ export default function Page() {
         )}
 
         {/* Chart */}
-        <div style={{ flex: 1, minHeight: 0, width: "100%" }}>
+        <div className="chart-area" style={{ width: "100%" }}>
           {selectedCoin && selectedMarket && (
             selectedMarket.isBinary ? (
               <Liveline
-                mode="candle"
-                candles={candles}
-                liveCandle={liveCandle}
-                candleWidth={3600}
                 data={ticks}
                 value={latestTick}
-                lineMode={lineMode}
-                lineData={ticks}
-                lineValue={latestTick}
-                onModeChange={(m) => setLineMode(m === "line")}
                 theme="light"
                 color={accentColor}
                 loading={loading}
@@ -492,34 +449,126 @@ export default function Page() {
                 showValue
                 formatValue={fmtChartValue}
                 window={currentWindow}
-                onWindowChange={setCurrentWindow}
-                windows={[
-                  { label: "1d", secs: 86400 },
-                  { label: "3d", secs: 259200 },
-                  { label: "7d", secs: 604800 },
-                ]}
               />
             ) : (
-              <Liveline
-                data={[]}
-                value={0}
-                series={multiSeries}
-                theme="light"
-                loading={loading}
-                grid
-                showValue
-                formatValue={(v) => fmtPct(v * 100)}
-                window={currentWindow}
-                onWindowChange={setCurrentWindow}
-                windows={[
-                  { label: "1d", secs: 86400 },
-                  { label: "3d", secs: 259200 },
-                  { label: "7d", secs: 604800 },
-                ]}
-              />
+              <div className="ll-multi" style={{ width: "100%", height: "100%" }}>
+                <Liveline
+                  data={[]}
+                  value={0}
+                  series={multiSeries}
+                  theme="light"
+                  loading={loading}
+                  grid
+                  showValue
+                  formatValue={(v) => fmtPct(v * 100)}
+                  window={currentWindow}
+                />
+              </div>
             )
           )}
         </div>
+
+        {/* Bottom bar: volume left, time windows right */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "8px 16px 12px",
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: "11px", color: "#6b7280" }}>
+            Vol {selectedMarket ? fmtVolume(selectedMarket.volume) : "—"}
+          </span>
+          <div style={{ display: "flex", gap: 2 }}>
+            {WINDOWS.map((w) => (
+              <button
+                key={w.secs}
+                onClick={() => setCurrentWindow(w.secs)}
+                style={{
+                  fontSize: "11px",
+                  padding: "2px 7px",
+                  borderRadius: 4,
+                  border: "none",
+                  cursor: "pointer",
+                  fontFamily: "system-ui, -apple-system, sans-serif",
+                  backgroundColor: currentWindow === w.secs ? "rgba(0,0,0,0.08)" : "transparent",
+                  color: currentWindow === w.secs ? "#111" : "#6b7280",
+                  fontWeight: currentWindow === w.secs ? 600 : 400,
+                }}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Pasito stepper — outside the border */}
+      {topMarkets.length > 0 && (
+        <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
+          <Stepper
+            count={topMarkets.length}
+            active={activeIdx}
+            onStepClick={handleStepChange}
+            filling={filling}
+            fillDuration={fillDuration}
+            className="pasito-theme"
+          />
+        </div>
+      )}
+
+      {/* Markets list */}
+      <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 0 }}>
+        {markets.map((m, i) => (
+          <div
+            key={m.coinId}
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              padding: "10px 4px",
+              borderTop: i === 0 ? "none" : "1px solid #f3f4f6",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            {/* Name + outcomes */}
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+              <span style={{ fontWeight: 600, fontSize: "13px", color: "#111", whiteSpace: "nowrap" }}>
+                {m.question}
+              </span>
+              {m.isBinary ? (
+                <>
+                  <span style={{ fontSize: "12px", color: "#16a34a", fontVariantNumeric: "tabular-nums" }}>
+                    {m.options[0].name} {fmtPct(m.options[0].price * 100)}
+                  </span>
+                  <span style={{ fontSize: "12px", color: "#dc2626", fontVariantNumeric: "tabular-nums" }}>
+                    {m.options[1].name} {fmtPct(m.options[1].price * 100)}
+                  </span>
+                </>
+              ) : (
+                m.options.map((opt, j) => (
+                  <span
+                    key={opt.coinId}
+                    style={{
+                      fontSize: "12px",
+                      color: MULTI_COLORS[j % MULTI_COLORS.length],
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {opt.name} {fmtPct(opt.price * 100)}
+                  </span>
+                ))
+              )}
+            </div>
+            {/* Volume */}
+            <span style={{ fontSize: "11px", color: "#9ca3af", flexShrink: 0 }}>
+              {fmtVolume(m.volume)}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
