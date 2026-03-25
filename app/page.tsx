@@ -313,7 +313,6 @@ export default function Page() {
             borderRadius: 12,
             display: "flex",
             flexDirection: "column",
-            overflow: "hidden",
             cursor: selectedMarket ? "pointer" : "default",
           }}
         >

@@ -32,6 +32,7 @@ body {
 /* Chart area heights — 20% smaller on mobile */
 .chart-area {
   height: 45vh;
+  overflow: visible;
 }
 
 @media (max-width: 768px) {
