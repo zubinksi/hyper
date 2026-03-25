@@ -50,3 +50,34 @@ body {
     width: 80%;
   }
 }
+
+/* Market detail page layout */
+.market-layout {
+  flex-direction: column;
+}
+
+.market-chart-col {
+  width: 100%;
+}
+
+.market-panel-col {
+  width: 100%;
+}
+
+@media (min-width: 769px) {
+  .market-layout {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .market-chart-col {
+    flex: 3;
+    min-width: 0;
+  }
+
+  .market-panel-col {
+    flex: 2;
+    min-width: 280px;
+    max-width: 400px;
+  }
+}
