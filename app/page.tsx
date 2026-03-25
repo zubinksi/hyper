@@ -321,9 +321,9 @@ export default function Page() {
             <div
               style={{
                 display: "flex",
-                alignItems: "center",
-                gap: 12,
-                flexWrap: "wrap",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                gap: 8,
                 flexShrink: 0,
                 padding: "14px 16px 10px",
               }}
@@ -337,7 +337,10 @@ export default function Page() {
               >
                 {selectedMarket.question}
               </span>
-              <OutcomeDots options={selectedMarket.options} isBinary={selectedMarket.isBinary} />
+              {/* Single-line outcome dots — overflow hidden clips any that don't fit */}
+              <div style={{ display: "flex", flexWrap: "nowrap", overflow: "hidden", gap: 10, width: "100%" }}>
+                <OutcomeDots options={selectedMarket.options} isBinary={selectedMarket.isBinary} />
+              </div>
             </div>
           )}
 
@@ -443,18 +446,19 @@ export default function Page() {
             }}
           >
             {/* Name + outcomes */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4, flex: 1, minWidth: 0 }}>
               <span
                 style={{
                   fontWeight: 600,
                   fontSize: "13px",
                   color: "#111",
-                  whiteSpace: "nowrap",
                 }}
               >
                 {m.question}
               </span>
-              <OutcomeDots options={m.options} isBinary={m.isBinary} />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <OutcomeDots options={m.options} isBinary={m.isBinary} />
+              </div>
             </div>
             {/* Volume */}
             <span style={{ fontSize: "11px", color: "#9ca3af", flexShrink: 0 }}>
