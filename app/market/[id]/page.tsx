@@ -718,7 +718,6 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
                   color={accentColor}
                   loading={loading}
                   grid
-                  showValue
                   formatValue={fmtChartValue}
                   window={currentWindow}
                 />
@@ -731,7 +730,6 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
                     theme="light"
                     loading={loading}
                     grid
-                    showValue
                     formatValue={(v) => fmtPct(v * 100)}
                     window={currentWindow}
                   />

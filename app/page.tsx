@@ -352,7 +352,6 @@ export default function Page() {
                   color={accentColor}
                   loading={loading}
                   grid
-                  showValue
                   formatValue={fmtChartValue}
                   window={currentWindow}
                 />
@@ -365,7 +364,6 @@ export default function Page() {
                     theme="light"
                     loading={loading}
                     grid
-                    showValue
                     formatValue={(v) => fmtPct(v * 100)}
                     window={currentWindow}
                   />
