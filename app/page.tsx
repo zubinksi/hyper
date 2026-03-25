@@ -240,13 +240,23 @@ export default function Page() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeIdx, markets.length]);
 
-  const { filling, fillDuration } = useAutoPlay({
+  const { filling, fillDuration, toggle } = useAutoPlay({
     count: topMarkets.length || 1,
     active: activeIdx,
     onStepChange: setActiveIdx,
     stepDuration: 5000,
     loop: true,
   });
+
+  // Auto-start playback once markets are loaded
+  const autoplayStartedRef = useRef(false);
+  useEffect(() => {
+    if (topMarkets.length > 0 && !autoplayStartedRef.current) {
+      autoplayStartedRef.current = true;
+      toggle();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topMarkets.length]);
 
   // Clock
   useEffect(() => {
@@ -434,9 +444,11 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Bordered chart card — 80% wide on desktop, 100% on mobile */}
+      {/* Width-constrained column: chart card + vol/window + stepper share the same width */}
+      <div className="chart-card" style={{ display: "flex", flexDirection: "column" }}>
+
+      {/* Bordered chart card */}
       <div
-        className="chart-card"
         style={{
           boxSizing: "border-box",
           border: "1px solid #e5e7eb",
@@ -548,6 +560,8 @@ export default function Page() {
           />
         </div>
       )}
+
+      </div>{/* end chart-card width wrapper */}
 
       {/* Markets list */}
       <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 0 }}>
