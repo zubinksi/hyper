@@ -122,10 +122,43 @@ function volOf(ctx: { dayNtlVlm?: string } | undefined): number {
   return parseFloat(ctx?.dayNtlVlm ?? "0") || 0;
 }
 
+function parseRecurringName(description: string): string | null {
+  const parts: Record<string, string> = {};
+  for (const part of description.split("|")) {
+    const sep = part.indexOf(":");
+    if (sep > 0) parts[part.slice(0, sep)] = part.slice(sep + 1);
+  }
+  if (parts["class"] !== "priceBinary") return null;
+
+  const { underlying, targetPrice, expiry } = parts;
+  if (!underlying || !targetPrice || !expiry) return null;
+
+  // expiry format: YYYYMMDD-HHMM
+  const m = expiry.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/);
+  if (!m) return null;
+
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const monthIdx = parseInt(m[2]) - 1;
+  const day      = parseInt(m[3]);
+  const hour     = parseInt(m[4]);
+  const min      = parseInt(m[5]);
+  const ampm     = hour >= 12 ? "PM" : "AM";
+  const h12      = (hour % 12 || 12).toString();
+  const mm       = min.toString().padStart(2, "0");
+
+  const price    = parseFloat(targetPrice);
+  const priceStr = Number.isInteger(price)
+    ? price.toLocaleString("en-US")
+    : price.toLocaleString("en-US", { maximumFractionDigits: 5 });
+
+  return `${underlying} above ${priceStr} on ${MONTHS[monthIdx]} ${day} at ${h12}:${mm} ${ampm}?`;
+}
+
 async function fetchPredictMarkets(): Promise<Market[]> {
   type OutcomeEntry = {
     outcome: number;
     name: string;
+    description?: string;
     sideSpecs: { name: string }[];
   };
   type QuestionEntry = {
@@ -194,8 +227,13 @@ async function fetchPredictMarkets(): Promise<Market[]> {
     const price1Raw = parseFloat(ctx1?.markPx ?? "0") || 0;
     const price1 = price1Raw > 0 ? price1Raw : price0 > 0 ? 1 - price0 : 0;
 
+    const question =
+      entry.name === "Recurring" && entry.description
+        ? parseRecurringName(entry.description) ?? entry.name
+        : entry.name;
+
     markets.push({
-      question: entry.name,
+      question,
       coinId: `#${enc0}`,
       testnet: true,
       // Sum yes + no side volumes
