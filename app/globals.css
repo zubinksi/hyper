@@ -15,8 +15,9 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 }
 
-/* Pasito stepper: transparent bg/border, 2× dot & active-width */
-.pasito-theme {
+/* Pasito stepper: transparent bg/border, 2× dot & active-width.
+   Double-class selector beats the single .pasito-container rule. */
+.pasito-container.pasito-theme {
   --pill-dot-size: 16px;
   --pill-active-width: 48px;
   --pill-container-bg: transparent;
@@ -36,5 +37,16 @@ body {
 @media (max-width: 768px) {
   .chart-area {
     height: 36vh;
+  }
+}
+
+/* Chart card: 80% width on desktop, full width on mobile */
+.chart-card {
+  width: 100%;
+}
+
+@media (min-width: 769px) {
+  .chart-card {
+    width: 80%;
   }
 }

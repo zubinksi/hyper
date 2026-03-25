@@ -65,9 +65,43 @@ function fmtPct(v: number): string {
 }
 
 function fmtVolume(v: number): string {
+  if (!v) return "—";
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
   if (v >= 1_000) return `$${(v / 1_000).toFixed(1)}K`;
   return `$${v.toFixed(0)}`;
+}
+
+interface OutcomesProps {
+  options: OutcomeOption[];
+  isBinary: boolean;
+}
+
+function OutcomeDots({ options, isBinary }: OutcomesProps) {
+  const colors = isBinary ? ["#16a34a", "#dc2626"] : MULTI_COLORS;
+  return (
+    <>
+      {options.map((opt, i) => (
+        <span
+          key={opt.coinId}
+          style={{ display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0 }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              backgroundColor: colors[i % colors.length],
+              display: "inline-block",
+              flexShrink: 0,
+            }}
+          />
+          <span style={{ color: "#6b7280", fontSize: "12px" }}>
+            {opt.name} {fmtPct(opt.price * 100)}
+          </span>
+        </span>
+      ))}
+    </>
+  );
 }
 
 function fmtDateTime(d: Date): string {
@@ -84,6 +118,10 @@ function fmtDateTime(d: Date): string {
   return `${DAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()} ${hh}:${mm}:${ss}${ampm}`;
 }
 
+function volOf(ctx: { dayNtlVlm?: string } | undefined): number {
+  return parseFloat(ctx?.dayNtlVlm ?? "0") || 0;
+}
+
 async function fetchPredictMarkets(): Promise<Market[]> {
   type OutcomeEntry = {
     outcome: number;
@@ -95,12 +133,18 @@ async function fetchPredictMarkets(): Promise<Market[]> {
     namedOutcomes: number[];
     fallbackOutcome: number;
   };
-  type AssetCtx = { markPx: string; dayNtlVlm: string; prevDayPx: string };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type AssetCtx = Record<string, any>;
 
   const [meta, [spotMeta, spotCtxs]] = await Promise.all([
     postInfo<{ outcomes: OutcomeEntry[]; questions?: QuestionEntry[] }>({ type: "outcomeMeta" }),
     postInfo<[{ universe: { name: string }[] }, AssetCtx[]]>({ type: "spotMetaAndAssetCtxs" }),
   ]);
+
+  // Debug: log structure of first spot context so volume field can be identified
+  if (spotCtxs.length > 0) {
+    console.log("[spotCtxs sample]", JSON.stringify(spotCtxs.slice(0, 3)));
+  }
 
   const priceMap = new Map<string, AssetCtx>();
   spotMeta.universe.forEach((u, i) => priceMap.set(u.name, spotCtxs[i]));
@@ -118,11 +162,14 @@ async function fetchPredictMarkets(): Promise<Market[]> {
     let totalVolume = 0;
     const options: OutcomeOption[] = ids.map((id) => {
       const entry = outcomeById.get(id);
-      const coinId = `#${10 * id}`;
-      const ctx = priceMap.get(coinId);
-      const price = parseFloat(ctx?.markPx ?? "0") || 0;
-      totalVolume += parseFloat(ctx?.dayNtlVlm ?? "0") || 0;
-      return { name: entry?.name ?? String(id), coinId, price };
+      const yesCoinId = `#${10 * id}`;
+      const noCoinId  = `#${10 * id + 1}`;
+      const yesCtx = priceMap.get(yesCoinId);
+      const noCtx  = priceMap.get(noCoinId);
+      const price = parseFloat(yesCtx?.markPx ?? "0") || 0;
+      // Sum yes + no side volumes
+      totalVolume += volOf(yesCtx) + volOf(noCtx);
+      return { name: entry?.name ?? String(id), coinId: yesCoinId, price };
     });
 
     markets.push({
@@ -151,7 +198,8 @@ async function fetchPredictMarkets(): Promise<Market[]> {
       question: entry.name,
       coinId: `#${enc0}`,
       testnet: true,
-      volume: parseFloat(ctx0?.dayNtlVlm ?? "0") || 0,
+      // Sum yes + no side volumes
+      volume: volOf(ctx0) + volOf(ctx1),
       isBinary: true,
       options: [
         { name: entry.sideSpecs[0]?.name ?? "Yes", coinId: `#${enc0}`, price: price0 },
@@ -386,10 +434,10 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Bordered chart card */}
+      {/* Bordered chart card — 80% wide on desktop, 100% on mobile */}
       <div
+        className="chart-card"
         style={{
-          width: "100%",
           boxSizing: "border-box",
           border: "1px solid #e5e7eb",
           borderRadius: 12,
@@ -403,7 +451,7 @@ export default function Page() {
           <div
             style={{
               display: "flex",
-              alignItems: "baseline",
+              alignItems: "center",
               gap: 12,
               flexWrap: "wrap",
               flexShrink: 0,
@@ -413,25 +461,7 @@ export default function Page() {
             <span style={{ fontWeight: "bold", fontSize: "15.6px", color: "#111" }}>
               {selectedMarket.question}
             </span>
-            {selectedMarket.isBinary ? (
-              <>
-                <span style={{ fontSize: "12px", fontWeight: 600, color: "#16a34a" }}>
-                  {selectedMarket.options[0].name} {fmtPct(selectedMarket.options[0].price * 100)}
-                </span>
-                <span style={{ fontSize: "12px", fontWeight: 600, color: "#dc2626" }}>
-                  {selectedMarket.options[1].name} {fmtPct(selectedMarket.options[1].price * 100)}
-                </span>
-              </>
-            ) : (
-              selectedMarket.options.map((opt, i) => (
-                <span
-                  key={opt.coinId}
-                  style={{ fontSize: "12px", fontWeight: 600, color: MULTI_COLORS[i % MULTI_COLORS.length] }}
-                >
-                  {opt.name} {fmtPct(opt.price * 100)}
-                </span>
-              ))
-            )}
+            <OutcomeDots options={selectedMarket.options} isBinary={selectedMarket.isBinary} />
           </div>
         )}
 
@@ -474,11 +504,11 @@ export default function Page() {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "8px 16px 12px",
+            padding: "14px 16px 14px",
             flexShrink: 0,
           }}
         >
-          <span style={{ fontSize: "11px", color: "#6b7280" }}>
+          <span style={{ fontSize: "11px", color: "#9ca3af" }}>
             Vol {selectedMarket ? fmtVolume(selectedMarket.volume) : "—"}
           </span>
           <div style={{ display: "flex", gap: 2 }}>
@@ -505,9 +535,9 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Pasito stepper — outside the border */}
+      {/* Pasito stepper — outside the border, left-aligned */}
       {topMarkets.length > 0 && (
-        <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
+        <div style={{ display: "flex", justifyContent: "flex-start", padding: "10px 0 4px" }}>
           <Stepper
             count={topMarkets.length}
             active={activeIdx}
@@ -526,7 +556,7 @@ export default function Page() {
             key={m.coinId}
             style={{
               display: "flex",
-              alignItems: "baseline",
+              alignItems: "center",
               justifyContent: "space-between",
               padding: "10px 4px",
               borderTop: i === 0 ? "none" : "1px solid #f3f4f6",
@@ -535,33 +565,11 @@ export default function Page() {
             }}
           >
             {/* Name + outcomes */}
-            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
               <span style={{ fontWeight: 600, fontSize: "13px", color: "#111", whiteSpace: "nowrap" }}>
                 {m.question}
               </span>
-              {m.isBinary ? (
-                <>
-                  <span style={{ fontSize: "12px", color: "#16a34a", fontVariantNumeric: "tabular-nums" }}>
-                    {m.options[0].name} {fmtPct(m.options[0].price * 100)}
-                  </span>
-                  <span style={{ fontSize: "12px", color: "#dc2626", fontVariantNumeric: "tabular-nums" }}>
-                    {m.options[1].name} {fmtPct(m.options[1].price * 100)}
-                  </span>
-                </>
-              ) : (
-                m.options.map((opt, j) => (
-                  <span
-                    key={opt.coinId}
-                    style={{
-                      fontSize: "12px",
-                      color: MULTI_COLORS[j % MULTI_COLORS.length],
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  >
-                    {opt.name} {fmtPct(opt.price * 100)}
-                  </span>
-                ))
-              )}
+              <OutcomeDots options={m.options} isBinary={m.isBinary} />
             </div>
             {/* Volume */}
             <span style={{ fontSize: "11px", color: "#9ca3af", flexShrink: 0 }}>
