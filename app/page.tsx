@@ -233,19 +233,19 @@ export default function Page() {
 
   const topMarkets = markets.slice(0, 6);
 
-  function handleStepChange(idx: number) {
-    setActiveIdx(idx);
-    const coin = markets[idx]?.coinId;
+  // Sync selectedCoin whenever activeIdx changes (or markets first load)
+  useEffect(() => {
+    const coin = markets[activeIdx]?.coinId;
     if (coin) setSelectedCoin(coin);
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeIdx, markets.length]);
 
   const { filling, fillDuration } = useAutoPlay({
     count: topMarkets.length || 1,
     active: activeIdx,
-    onStepChange: handleStepChange,
+    onStepChange: setActiveIdx,
     stepDuration: 5000,
     loop: true,
-    enabled: topMarkets.length > 0,
   });
 
   // Clock
@@ -498,50 +498,50 @@ export default function Page() {
           )}
         </div>
 
-        {/* Bottom bar: volume left, time windows right */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "14px 16px 14px",
-            flexShrink: 0,
-          }}
-        >
-          <span style={{ fontSize: "11px", color: "#9ca3af" }}>
-            Vol {selectedMarket ? fmtVolume(selectedMarket.volume) : "—"}
-          </span>
-          <div style={{ display: "flex", gap: 2 }}>
-            {WINDOWS.map((w) => (
-              <button
-                key={w.secs}
-                onClick={() => setCurrentWindow(w.secs)}
-                style={{
-                  fontSize: "11px",
-                  padding: "2px 7px",
-                  borderRadius: 4,
-                  border: "none",
-                  cursor: "pointer",
-                  fontFamily: "system-ui, -apple-system, sans-serif",
-                  backgroundColor: currentWindow === w.secs ? "rgba(0,0,0,0.08)" : "transparent",
-                  color: currentWindow === w.secs ? "#111" : "#6b7280",
-                  fontWeight: currentWindow === w.secs ? 600 : 400,
-                }}
-              >
-                {w.label}
-              </button>
-            ))}
-          </div>
+      </div>
+
+      {/* Vol / time-windows row — outside the border, between card and stepper */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 0",
+        }}
+      >
+        <span style={{ fontSize: "11px", color: "#9ca3af" }}>
+          Vol {selectedMarket ? fmtVolume(selectedMarket.volume) : "—"}
+        </span>
+        <div style={{ display: "flex", gap: 2 }}>
+          {WINDOWS.map((w) => (
+            <button
+              key={w.secs}
+              onClick={() => setCurrentWindow(w.secs)}
+              style={{
+                fontSize: "11px",
+                padding: "2px 7px",
+                borderRadius: 4,
+                border: "none",
+                cursor: "pointer",
+                fontFamily: "system-ui, -apple-system, sans-serif",
+                backgroundColor: currentWindow === w.secs ? "rgba(0,0,0,0.08)" : "transparent",
+                color: currentWindow === w.secs ? "#111" : "#6b7280",
+                fontWeight: currentWindow === w.secs ? 600 : 400,
+              }}
+            >
+              {w.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* Pasito stepper — outside the border, left-aligned */}
+      {/* Pasito stepper — left-aligned, below vol/window row */}
       {topMarkets.length > 0 && (
-        <div style={{ display: "flex", justifyContent: "flex-start", padding: "10px 0 4px" }}>
+        <div style={{ display: "flex", justifyContent: "flex-start", paddingBottom: 4 }}>
           <Stepper
             count={topMarkets.length}
             active={activeIdx}
-            onStepClick={handleStepChange}
+            onStepClick={setActiveIdx}
             filling={filling}
             fillDuration={fillDuration}
             className="pasito-theme"
