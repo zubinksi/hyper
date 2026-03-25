@@ -80,11 +80,15 @@ function parseRecurringName(description: string): string | null {
   const m = expiry.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/);
   if (!m) return null;
 
+  // Parse as UTC then display in the user's local timezone (matches Hyperliquid UI)
+  const expiryLocal = new Date(Date.UTC(
+    parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]), parseInt(m[4]), parseInt(m[5])
+  ));
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const monthIdx = parseInt(m[2]) - 1;
-  const day      = parseInt(m[3]);
-  const hour     = parseInt(m[4]);
-  const min      = parseInt(m[5]);
+  const monthIdx = expiryLocal.getMonth();
+  const day      = expiryLocal.getDate();
+  const hour     = expiryLocal.getHours();
+  const min      = expiryLocal.getMinutes();
   const ampm     = hour >= 12 ? "PM" : "AM";
   const h12      = (hour % 12 || 12).toString();
   const mm       = min.toString().padStart(2, "0");

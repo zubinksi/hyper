@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useWallet } from "./lib/wallet-context";
 import { Stepper, useAutoPlay } from "pasito";
 import "pasito/styles.css";
 import type { LivelinePoint, LivelineSeries } from "liveline";
@@ -73,6 +74,10 @@ function fmtDateTime(d: Date): string {
 
 export default function Page() {
   const router = useRouter();
+  const wallet = useWallet();
+  const shortAddr = wallet.address
+    ? `${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`
+    : null;
   const [now, setNow] = useState(() => new Date());
   const [markets, setMarkets] = useState<Market[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -291,9 +296,60 @@ export default function Page() {
         minHeight: "100vh",
         backgroundColor: "#ffffff",
         boxSizing: "border-box",
-        padding: "12px",
       }}
     >
+      {/* Header */}
+      <header
+        style={{
+          borderBottom: "1px solid #f3f4f6",
+          padding: "0 16px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          height: 52,
+          flexShrink: 0,
+          gap: 10,
+        }}
+      >
+        {wallet.error && (
+          <span style={{ fontSize: 11, color: "#dc2626", maxWidth: 200, textAlign: "right" }}>
+            {wallet.error}
+          </span>
+        )}
+        <button
+          onClick={wallet.address ? wallet.disconnect : wallet.connect}
+          disabled={wallet.connecting}
+          style={{
+            background: wallet.address ? "#f0fdf4" : "#111",
+            color: wallet.address ? "#16a34a" : "#fff",
+            border: wallet.address ? "1px solid #bbf7d0" : "none",
+            borderRadius: 8,
+            padding: "7px 14px",
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: wallet.connecting ? "default" : "pointer",
+            fontFamily: "inherit",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          {wallet.connecting ? (
+            "Connecting…"
+          ) : wallet.address ? (
+            <>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#16a34a", display: "inline-block" }} />
+              {shortAddr}
+            </>
+          ) : (
+            "Connect Wallet"
+          )}
+        </button>
+      </header>
+
+      {/* Content */}
+      <div style={{ padding: "12px", flex: 1 }}>
+
       {/* Clock */}
       <div style={{ flexShrink: 0, marginBottom: 10 }}>
         <div style={{ fontWeight: "normal", fontSize: "13px", letterSpacing: "0.04em", color: "#111" }}>
@@ -467,6 +523,7 @@ export default function Page() {
           </Link>
         ))}
       </div>
+      </div> {/* end content */}
     </div>
   );
 }
