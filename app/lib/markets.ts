@@ -97,18 +97,20 @@ function parseRecurringName(description: string): string | null {
   return `${underlying} above ${priceStr} on ${MONTHS[monthIdx]} ${day} at ${h12}:${mm} ${ampm}?`;
 }
 
-/** Returns true if the recurring market's expiry has already passed. */
-function isRecurringExpired(description: string): boolean {
+/** Parses the key fields from a priceBinary description string. */
+function parseRecurringMeta(description: string): { underlying: string; expiryMs: number } | null {
   const parts: Record<string, string> = {};
   for (const part of description.split("|")) {
     const sep = part.indexOf(":");
     if (sep > 0) parts[part.slice(0, sep)] = part.slice(sep + 1);
   }
-  if (parts["class"] !== "priceBinary") return false;
-  const m = parts["expiry"]?.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/);
-  if (!m) return false;
+  if (parts["class"] !== "priceBinary") return null;
+  const { underlying, expiry } = parts;
+  if (!underlying || !expiry) return null;
+  const m = expiry.match(/^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})$/);
+  if (!m) return null;
   const expiryMs = Date.UTC(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]), parseInt(m[4]), parseInt(m[5]));
-  return expiryMs < Date.now();
+  return { underlying, expiryMs };
 }
 
 export interface MarketsResult {
@@ -207,10 +209,12 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
     });
   }
 
+  // Track soonest active recurring market per underlying to deduplicate
+  // (Hyperliquid keeps old + new versions simultaneously; we only want the soonest expiry)
+  const recurringByUnderlying = new Map<string, { expiryMs: number; market: Market }>();
+
   for (const entry of meta.outcomes) {
     if (claimedIds.has(entry.outcome)) continue;
-    // Skip expired recurring markets — only show the currently active version
-    if (entry.name === "Recurring" && entry.description && isRecurringExpired(entry.description)) continue;
 
     const enc0 = 10 * entry.outcome;
     const enc1 = 10 * entry.outcome + 1;
@@ -226,12 +230,11 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
         ? parseRecurringName(entry.description) ?? entry.name
         : entry.name;
 
-    // Show description only if it's human-readable (not the machine-readable recurring format)
     const desc = entry.description && !entry.description.startsWith("class:")
       ? entry.description
       : undefined;
 
-    markets.push({
+    const market: Market = {
       question,
       coinId: `#${enc0}`,
       testnet: true,
@@ -242,7 +245,25 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
         { name: entry.sideSpecs[1]?.name ?? "No",  coinId: `#${enc1}`, price: price1 },
       ],
       description: desc,
-    });
+    };
+
+    if (entry.name === "Recurring" && entry.description) {
+      const meta = parseRecurringMeta(entry.description);
+      if (!meta) continue; // malformed — skip
+      if (meta.expiryMs < Date.now()) continue; // already expired — skip
+      // Keep only the soonest-expiring active version per underlying
+      const existing = recurringByUnderlying.get(meta.underlying);
+      if (!existing || meta.expiryMs < existing.expiryMs) {
+        recurringByUnderlying.set(meta.underlying, { expiryMs: meta.expiryMs, market });
+      }
+    } else {
+      markets.push(market);
+    }
+  }
+
+  // Add the single winning recurring market per underlying
+  for (const { market } of recurringByUnderlying.values()) {
+    markets.push(market);
   }
 
   return {
