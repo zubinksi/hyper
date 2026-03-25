@@ -31,12 +31,12 @@ body {
 
 /* Chart area heights — 20% smaller on mobile */
 .chart-area {
-  height: 45vh;
+  height: 60vh;
 }
 
 @media (max-width: 768px) {
   .chart-area {
-    height: 36vh;
+    height: 45vh;
   }
 }
 
@@ -47,7 +47,7 @@ body {
 
 @media (min-width: 769px) {
   .chart-card {
-    width: 80%;
+    width: 100%;
   }
 }
 
