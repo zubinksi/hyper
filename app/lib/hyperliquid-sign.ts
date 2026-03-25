@@ -91,6 +91,58 @@ export interface OrderResult {
   data?: unknown;
 }
 
+const HL_TESTNET_INFO = "https://api.hyperliquid-testnet.xyz/info";
+
+/**
+ * Estimate slippage by walking the L2 order book.
+ * Returns percentage slippage (positive = worse than mid), or null if unavailable.
+ */
+export async function estimateSlippage(
+  coinId: string,
+  isBuy: boolean,
+  size: number
+): Promise<number | null> {
+  if (size <= 0) return null;
+  try {
+    const res = await fetch(HL_TESTNET_INFO, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "l2Book", coin: coinId }),
+    });
+    const book = (await res.json()) as {
+      levels: Array<Array<{ px: string; sz: string }>>;
+    };
+    const bids = book.levels?.[0] ?? [];
+    const asks = book.levels?.[1] ?? [];
+    if (!bids.length || !asks.length) return null;
+
+    const midPrice = (parseFloat(bids[0].px) + parseFloat(asks[0].px)) / 2;
+    if (midPrice <= 0) return null;
+
+    const levels = isBuy ? asks : bids;
+    let remaining = size;
+    let totalCost = 0;
+    for (const lvl of levels) {
+      if (remaining <= 0) break;
+      const px = parseFloat(lvl.px);
+      const sz = parseFloat(lvl.sz);
+      const filled = Math.min(remaining, sz);
+      totalCost += filled * px;
+      remaining -= filled;
+    }
+    if (remaining > 0 && levels.length > 0) {
+      totalCost += remaining * parseFloat(levels[levels.length - 1].px);
+    }
+
+    const avgPx = totalCost / size;
+    return isBuy
+      ? ((avgPx - midPrice) / midPrice) * 100
+      : ((midPrice - avgPx) / midPrice) * 100;
+  } catch {
+    return null;
+  }
+}
+
 export async function signAndSubmitOrder({
   walletProvider,
   spotIndex,

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Providers } from "./providers";
 
 export const metadata: Metadata = {
   title: "Hyperliquid Dashboard",
@@ -14,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en" style={{ height: "100%" }}>
       <body style={{ margin: 0, height: "100%", display: "flex", flexDirection: "column" }}>
-        {children}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

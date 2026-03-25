@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Stepper, useAutoPlay } from "pasito";
 import "pasito/styles.css";
 import type { LivelinePoint, LivelineSeries } from "liveline";
@@ -71,6 +72,7 @@ function fmtDateTime(d: Date): string {
 }
 
 export default function Page() {
+  const router = useRouter();
   const [now, setNow] = useState(() => new Date());
   const [markets, setMarkets] = useState<Market[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -302,8 +304,9 @@ export default function Page() {
       {/* Width-constrained column */}
       <div className="chart-card" style={{ display: "flex", flexDirection: "column" }}>
 
-        {/* Bordered chart card */}
+        {/* Bordered chart card — entire card is clickable */}
         <div
+          onClick={() => selectedMarket && router.push(`/market/${selectedMarket.coinId.slice(1)}`)}
           style={{
             boxSizing: "border-box",
             border: "1px solid #e5e7eb",
@@ -311,9 +314,10 @@ export default function Page() {
             display: "flex",
             flexDirection: "column",
             overflow: "hidden",
+            cursor: selectedMarket ? "pointer" : "default",
           }}
         >
-          {/* Market header — clickable title */}
+          {/* Market header */}
           {selectedMarket && (
             <div
               style={{
@@ -325,21 +329,15 @@ export default function Page() {
                 padding: "14px 16px 10px",
               }}
             >
-              <Link
-                href={`/market/${selectedMarket.coinId.slice(1)}`}
-                style={{ textDecoration: "none", color: "inherit" }}
+              <span
+                style={{
+                  fontWeight: "bold",
+                  fontSize: "15.6px",
+                  color: "#111",
+                }}
               >
-                <span
-                  style={{
-                    fontWeight: "bold",
-                    fontSize: "15.6px",
-                    color: "#111",
-                    cursor: "pointer",
-                  }}
-                >
-                  {selectedMarket.question}
-                </span>
-              </Link>
+                {selectedMarket.question}
+              </span>
               <OutcomeDots options={selectedMarket.options} isBinary={selectedMarket.isBinary} />
             </div>
           )}
@@ -431,9 +429,12 @@ export default function Page() {
       {/* Markets list */}
       <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 0 }}>
         {markets.map((m, i) => (
-          <div
+          <Link
             key={m.coinId}
+            href={`/market/${m.coinId.slice(1)}`}
             style={{
+              textDecoration: "none",
+              color: "inherit",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
@@ -441,33 +442,28 @@ export default function Page() {
               borderTop: i === 0 ? "none" : "1px solid #f3f4f6",
               gap: 12,
               flexWrap: "wrap",
+              cursor: "pointer",
             }}
           >
             {/* Name + outcomes */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
-              <Link
-                href={`/market/${m.coinId.slice(1)}`}
-                style={{ textDecoration: "none", color: "inherit", flexShrink: 0 }}
+              <span
+                style={{
+                  fontWeight: 600,
+                  fontSize: "13px",
+                  color: "#111",
+                  whiteSpace: "nowrap",
+                }}
               >
-                <span
-                  style={{
-                    fontWeight: 600,
-                    fontSize: "13px",
-                    color: "#111",
-                    whiteSpace: "nowrap",
-                    cursor: "pointer",
-                  }}
-                >
-                  {m.question}
-                </span>
-              </Link>
+                {m.question}
+              </span>
               <OutcomeDots options={m.options} isBinary={m.isBinary} />
             </div>
             {/* Volume */}
             <span style={{ fontSize: "11px", color: "#9ca3af", flexShrink: 0 }}>
               {fmtVolume(m.volume)}
             </span>
-          </div>
+          </Link>
         ))}
       </div>
     </div>

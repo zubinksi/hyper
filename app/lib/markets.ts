@@ -117,35 +117,46 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type AssetCtx = Record<string, any>;
 
-  const [meta, [spotMeta, spotCtxs]] = await Promise.all([
+  const [meta, [spotMetaRaw, spotCtxs]] = await Promise.all([
     postInfo<{ outcomes: OutcomeEntry[]; questions?: QuestionEntry[] }>({ type: "outcomeMeta" }),
-    postInfo<[{ universe: { name: string }[] }, AssetCtx[]]>({ type: "spotMetaAndAssetCtxs" }),
+    postInfo<[
+      { universe: { name: string; tokens: number[] }[]; tokens: { name: string }[] },
+      AssetCtx[]
+    ]>({ type: "spotMetaAndAssetCtxs" }),
   ]);
 
-  // Build both maps with normalized names.
-  // The spot universe uses pair names like "#20490/USDC"; prediction market
-  // lookups use just "#20490", so we index by both forms.
+  const spotMeta = spotMetaRaw as {
+    universe: { name: string; tokens: number[] }[];
+    tokens: { name: string }[];
+  };
+
+  // Build index maps.  The spot universe lists PAIRS (e.g. "#20490/USDH") while
+  // prediction-market lookups use just the base token name ("#20490").
+  // We resolve via spotMeta.tokens[pair.tokens[0]].name so we match regardless
+  // of the quote currency or pair-name format.
   const spotIndexMap: Record<string, number> = {};
   const priceMap = new Map<string, AssetCtx>();
 
   spotMeta.universe.forEach((u, i) => {
+    // Always index by the full pair name
     spotIndexMap[u.name] = i;
     priceMap.set(u.name, spotCtxs[i]);
-    // Also map by the base token name (everything before the first "/")
-    const base = u.name.split("/")[0];
-    if (base !== u.name) {
-      spotIndexMap[base] = i;
-      priceMap.set(base, spotCtxs[i]);
+
+    // Index by base token name from the tokens sub-array (most reliable)
+    const baseTokenIdx = u.tokens?.[0];
+    if (baseTokenIdx !== undefined && spotMeta.tokens?.[baseTokenIdx]) {
+      const baseName = spotMeta.tokens[baseTokenIdx].name;
+      spotIndexMap[baseName] = i;
+      priceMap.set(baseName, spotCtxs[i]);
+    }
+
+    // Fallback: strip everything after "/" in the pair name
+    const slashBase = u.name.split("/")[0];
+    if (slashBase !== u.name) {
+      if (spotIndexMap[slashBase] === undefined) spotIndexMap[slashBase] = i;
+      if (!priceMap.has(slashBase)) priceMap.set(slashBase, spotCtxs[i]);
     }
   });
-
-  // Debug: log first prediction market ctx to identify volume field
-  const predSample = spotMeta.universe
-    .map((u, i) => ({ name: u.name, ctx: spotCtxs[i] }))
-    .find((x) => x.name.startsWith("#"));
-  if (predSample) {
-    console.log("[prediction ctx sample]", predSample.name, JSON.stringify(predSample.ctx));
-  }
 
   const outcomeById = new Map<number, OutcomeEntry>();
   for (const e of meta.outcomes) outcomeById.set(e.outcome, e);

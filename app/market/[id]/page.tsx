@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { use } from "react";
@@ -15,7 +15,8 @@ import {
   HL_TESTNET_WS,
 } from "../../lib/markets";
 import type { Market, HLCandle, OutcomeOption } from "../../lib/markets";
-import { signAndSubmitOrder } from "../../lib/hyperliquid-sign";
+import { signAndSubmitOrder, estimateSlippage } from "../../lib/hyperliquid-sign";
+import { useWallet } from "../../lib/wallet-context";
 
 const Liveline = dynamic(
   () => import("liveline").then((m) => ({ default: m.Liveline })),
@@ -27,86 +28,6 @@ const WINDOWS = [
   { label: "3d", secs: 259200 },
   { label: "7d", secs: 604800 },
 ];
-
-/* ─── Wallet hook ────────────────────────────────────────────── */
-
-interface WalletState {
-  address: string | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  provider: any | null;
-  connecting: boolean;
-  error: string | null;
-}
-
-function useWallet() {
-  const [state, setState] = useState<WalletState>({
-    address: null,
-    provider: null,
-    connecting: false,
-    error: null,
-  });
-
-  const connect = useCallback(async () => {
-    setState((s) => ({ ...s, connecting: true, error: null }));
-    try {
-      // 1. Try injected provider (MetaMask, Rabby, etc.) first
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const injected = typeof window !== "undefined" ? (window as any).ethereum : null;
-      if (injected) {
-        const accounts: string[] = await injected.request({
-          method: "eth_requestAccounts",
-        });
-        setState({ address: accounts[0], provider: injected, connecting: false, error: null });
-        return;
-      }
-
-      // 2. Fall back to WalletConnect
-      const projectId =
-        process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ||
-        "ed1c8661cd48e06fa3397987e8db2281";
-
-      const { default: EthereumProvider } = await import(
-        "@walletconnect/ethereum-provider"
-      );
-      const wcProvider = await EthereumProvider.init({
-        projectId,
-        chains: [1],
-        showQrModal: true,
-        methods: [
-          "eth_signTypedData_v4",
-          "eth_accounts",
-          "eth_requestAccounts",
-          "personal_sign",
-        ],
-        events: ["accountsChanged", "disconnect"],
-      });
-
-      await wcProvider.connect();
-      const accounts: string[] = wcProvider.accounts;
-      setState({
-        address: accounts[0] ?? null,
-        provider: wcProvider,
-        connecting: false,
-        error: null,
-      });
-    } catch (err: unknown) {
-      setState((s) => ({
-        ...s,
-        connecting: false,
-        error: err instanceof Error ? err.message : "Connection failed",
-      }));
-    }
-  }, []);
-
-  const disconnect = useCallback(async () => {
-    if (state.provider?.disconnect) {
-      try { await state.provider.disconnect(); } catch { /* ignore */ }
-    }
-    setState({ address: null, provider: null, connecting: false, error: null });
-  }, [state.provider]);
-
-  return { ...state, connect, disconnect };
-}
 
 /* ─── Outcome dots ───────────────────────────────────────────── */
 
@@ -161,6 +82,7 @@ function TradingPanel({
   const [quantity, setQuantity] = useState("");
   const [tradeStatus, setTradeStatus] = useState<TradeStatus>("idle");
   const [tradeMsg, setTradeMsg] = useState("");
+  const [slippage, setSlippage] = useState<number | null>(null);
 
   // Reset status when inputs change
   useEffect(() => { setTradeStatus("idle"); setTradeMsg(""); }, [side, selectedOutcomeIdx, selectedSide, quantity]);
@@ -194,10 +116,16 @@ function TradingPanel({
   const qty        = parseFloat(quantity) || 0;
   const orderValue = qty * tradingPrice;
   const payout     = qty; // 1 USDH per token at resolution
-  const slippageEst =
-    tradingPrice > 0 && tradingPrice < 1
-      ? ((1 - tradingPrice) * 15).toFixed(4)
-      : "0.0000";
+
+  // Debounced L2 slippage estimate
+  useEffect(() => {
+    if (qty <= 0) { setSlippage(null); return; }
+    const t = setTimeout(() => {
+      estimateSlippage(tradingCoinId, side === "buy", qty).then(setSlippage);
+    }, 400);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qty, side, tradingCoinId]);
 
   async function handleTrade() {
     if (!walletAddress || !walletProvider) {
@@ -449,7 +377,7 @@ function TradingPanel({
             },
             {
               label: "Slippage",
-              value: `Est: ${slippageEst}% / Max: 8.00%`,
+              value: slippage !== null ? `Est: ${slippage.toFixed(2)}% / Max: 8.00%` : "Est: — / Max: 8.00%",
               valueColor: "#6b7280",
             },
             ...(side === "buy" && qty > 0
@@ -767,7 +695,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
       {/* ── Main content: chart + trading panel ── */}
       <div
         className="market-layout"
-        style={{ display: "flex", gap: 0, flex: 1, minHeight: 0 }}
+        style={{ display: "flex", gap: 0 }}
       >
         {/* Chart column */}
         <div
