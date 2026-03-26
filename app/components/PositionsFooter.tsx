@@ -3,14 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useWallet } from "../lib/wallet-context";
 import { fetchPredictMarkets, postInfo } from "../lib/markets";
-import type { Market } from "../lib/markets";
-
-interface BalanceEntry {
-  coin: string;
-  hold: string;
-  total: string;
-  entryNtl?: string;
-}
+import { fetchOutcomeBalances } from "../lib/evm";
 
 interface PositionRow {
   coinId: string;
@@ -24,46 +17,6 @@ interface PositionRow {
   roe: number | null;
 }
 
-function buildPositions(balances: BalanceEntry[], markets: Market[]): PositionRow[] {
-  const lookup = new Map<string, { question: string; outcomeName: string; markPrice: number }>();
-  for (const m of markets) {
-    for (const opt of m.options) {
-      lookup.set(opt.coinId, { question: m.question, outcomeName: opt.name, markPrice: opt.price });
-    }
-  }
-
-  const rows: PositionRow[] = [];
-  for (const b of balances) {
-    if (!b.coin.startsWith("#")) continue;
-    const size = parseFloat(b.total);
-    if (!(size > 0)) continue;
-
-    const info = lookup.get(b.coin);
-    if (!info) continue;
-
-    const entryNtl = b.entryNtl !== undefined ? parseFloat(b.entryNtl) : null;
-    const entryPrice = entryNtl !== null && size > 0 ? entryNtl / size : null;
-    const positionValue = size * info.markPrice;
-    const pnl = entryNtl !== null ? positionValue - entryNtl : null;
-    const roe = pnl !== null && entryNtl !== null && entryNtl > 0
-      ? (pnl / entryNtl) * 100
-      : null;
-
-    rows.push({
-      coinId: b.coin,
-      question: info.question,
-      outcomeName: info.outcomeName,
-      size,
-      markPrice: info.markPrice,
-      entryPrice,
-      positionValue,
-      pnl,
-      roe,
-    });
-  }
-  return rows;
-}
-
 const COLS = ["Prediction", "Size", "Position Value", "Entry Price", "Mark Price", "PNL (ROE %)"];
 
 export default function PositionsFooter() {
@@ -74,11 +27,68 @@ export default function PositionsFooter() {
 
   async function refresh(addr: string) {
     try {
-      const [{ markets }, data] = await Promise.all([
-        fetchPredictMarkets(),
-        postInfo<{ balances: BalanceEntry[] }>({ type: "spotClearinghouseState", user: addr }),
-      ]);
-      setPositions(buildPositions(data.balances ?? [], markets));
+      const { markets } = await fetchPredictMarkets();
+
+      // All outcome coinIds across every market
+      const allCoinIds = markets.flatMap((m) => m.options.map((o) => o.coinId));
+
+      // ERC-1155 batch balances (primary source for position sizes)
+      const balances = await fetchOutcomeBalances(addr, allCoinIds);
+
+      // spotClearinghouseState for entry prices / PNL (best-effort supplement)
+      const entryPriceMap: Record<string, number> = {};
+      try {
+        const data = await postInfo<{
+          balances: { coin: string; total: string; entryNtl?: string }[];
+        }>({ type: "spotClearinghouseState", user: addr });
+        for (const b of data.balances ?? []) {
+          const size = parseFloat(b.total);
+          if (size > 0 && b.entryNtl) {
+            entryPriceMap[b.coin] = parseFloat(b.entryNtl) / size;
+          }
+        }
+      } catch { /* entry prices unavailable — show "—" */ }
+
+      // Market info lookup
+      const lookup = new Map<string, { question: string; outcomeName: string; markPrice: number }>();
+      for (const m of markets) {
+        for (const opt of m.options) {
+          lookup.set(opt.coinId, {
+            question: m.question,
+            outcomeName: opt.name,
+            markPrice: opt.price,
+          });
+        }
+      }
+
+      const rows: PositionRow[] = [];
+      for (const [coinId, size] of Object.entries(balances)) {
+        if (!(size > 0)) continue;
+        const info = lookup.get(coinId);
+        if (!info) continue;
+
+        const entryPrice = entryPriceMap[coinId] ?? null;
+        const positionValue = size * info.markPrice;
+        const entryNtl = entryPrice !== null ? entryPrice * size : null;
+        const pnl = entryNtl !== null ? positionValue - entryNtl : null;
+        const roe =
+          pnl !== null && entryNtl !== null && entryNtl > 0
+            ? (pnl / entryNtl) * 100
+            : null;
+
+        rows.push({
+          coinId,
+          question: info.question,
+          outcomeName: info.outcomeName,
+          size,
+          markPrice: info.markPrice,
+          entryPrice,
+          positionValue,
+          pnl,
+          roe,
+        });
+      }
+      setPositions(rows);
     } catch {
       // silently ignore network errors
     }
@@ -103,7 +113,7 @@ export default function PositionsFooter() {
 
   if (!address) return null;
 
-  const fmtPrice = (v: number) => v < 0.01 ? v.toFixed(6) : v.toFixed(4);
+  const fmtPrice = (v: number) => (v < 0.01 ? v.toFixed(6) : v.toFixed(4));
   const fmtPnl = (pnl: number | null, roe: number | null) => {
     if (pnl === null) return "—";
     const sign = pnl >= 0 ? "+" : "";
@@ -172,39 +182,44 @@ export default function PositionsFooter() {
                 boxSizing: "border-box",
               }}
             >
-              {/* Prediction name */}
               <div style={{ flex: "3 0 160px", minWidth: 0 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: "#111", whiteSpace: "nowrap" }}>
                   {pos.outcomeName}
                 </div>
-                <div style={{ fontSize: 11, color: "#9ca3af", whiteSpace: "nowrap", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis" }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "#9ca3af",
+                    whiteSpace: "nowrap",
+                    maxWidth: 240,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
                   {pos.question}
                 </div>
               </div>
-              {/* Size */}
               <span style={{ flex: "1 0 80px", fontSize: 12, color: "#111", alignSelf: "center" }}>
                 {pos.size.toFixed(2)}
               </span>
-              {/* Position Value */}
               <span style={{ flex: "1 0 80px", fontSize: 12, color: "#111", alignSelf: "center" }}>
                 ${pos.positionValue.toFixed(2)}
               </span>
-              {/* Entry Price */}
               <span style={{ flex: "1 0 80px", fontSize: 12, color: "#111", alignSelf: "center" }}>
                 {pos.entryPrice !== null ? fmtPrice(pos.entryPrice) : "—"}
               </span>
-              {/* Mark Price */}
               <span style={{ flex: "1 0 80px", fontSize: 12, color: "#111", alignSelf: "center" }}>
                 {fmtPrice(pos.markPrice)}
               </span>
-              {/* PNL */}
-              <span style={{
-                flex: "1 0 80px",
-                fontSize: 12,
-                fontWeight: 500,
-                alignSelf: "center",
-                color: pos.pnl === null ? "#9ca3af" : pos.pnl >= 0 ? "#16a34a" : "#dc2626",
-              }}>
+              <span
+                style={{
+                  flex: "1 0 80px",
+                  fontSize: 12,
+                  fontWeight: 500,
+                  alignSelf: "center",
+                  color: pos.pnl === null ? "#9ca3af" : pos.pnl >= 0 ? "#16a34a" : "#dc2626",
+                }}
+              >
                 {fmtPnl(pos.pnl, pos.roe)}
               </span>
             </div>

@@ -16,6 +16,7 @@ import {
 } from "../../lib/markets";
 import type { Market, HLCandle, OutcomeOption } from "../../lib/markets";
 import { signAndSubmitOrder, estimateSlippage } from "../../lib/hyperliquid-sign";
+import { fetchUsdhBalance, fetchOutcomeBalance } from "../../lib/evm";
 import { useWallet } from "../../lib/wallet-context";
 
 const Liveline = dynamic(
@@ -98,6 +99,8 @@ function TradingPanel({
   const [tradeStatus, setTradeStatus] = useState<TradeStatus>("idle");
   const [tradeMsg, setTradeMsg] = useState("");
   const [slippage, setSlippage] = useState<number | null>(null);
+  const [usdhBalance, setUsdhBalance] = useState<number | null>(null);
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null);
 
   // Reset status when inputs change
   useEffect(() => { setTradeStatus("idle"); setTradeMsg(""); }, [side, selectedOutcomeIdx, selectedSide, quantity]);
@@ -131,6 +134,19 @@ function TradingPanel({
   const qty        = parseFloat(quantity) || 0;
   const orderValue = qty * tradingPrice;
   const payout     = qty; // 1 USDH per token at resolution
+
+  // Fetch USDH balance (for buy form)
+  useEffect(() => {
+    if (!walletAddress) { setUsdhBalance(null); return; }
+    fetchUsdhBalance(walletAddress).then(setUsdhBalance);
+  }, [walletAddress]);
+
+  // Fetch outcome token balance (for sell form)
+  useEffect(() => {
+    if (!walletAddress) { setTokenBalance(null); return; }
+    fetchOutcomeBalance(walletAddress, tradingCoinId).then(setTokenBalance);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walletAddress, tradingCoinId]);
 
   // Debounced L2 slippage estimate
   useEffect(() => {
@@ -278,14 +294,41 @@ function TradingPanel({
           style={{
             display: "flex",
             justifyContent: "space-between",
+            alignItems: "center",
             marginBottom: 10,
             fontSize: 12,
           }}
         >
           <span style={{ color: "#9ca3af" }}>Available to Trade</span>
-          <span style={{ color: "#111", fontWeight: 500 }}>
-            {side === "buy" ? "0 USDH" : `0 ${tradingName}`}
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {side === "sell" && tokenBalance !== null && tokenBalance > 0 && (
+              <button
+                onClick={() => setQuantity(tokenBalance.toFixed(6).replace(/\.?0+$/, ""))}
+                style={{
+                  fontSize: 11,
+                  padding: "2px 7px",
+                  borderRadius: 4,
+                  border: "1px solid #e5e7eb",
+                  background: "#f9fafb",
+                  color: "#374151",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  fontWeight: 600,
+                }}
+              >
+                Max
+              </button>
+            )}
+            <span style={{ color: "#111", fontWeight: 500 }}>
+              {side === "buy"
+                ? usdhBalance !== null
+                  ? `${usdhBalance.toFixed(2)} USDH`
+                  : walletAddress ? "— USDH" : "0 USDH"
+                : tokenBalance !== null
+                  ? `${tokenBalance.toFixed(4).replace(/\.?0+$/, "")} ${tradingName}`
+                  : walletAddress ? `— ${tradingName}` : `0 ${tradingName}`}
+            </span>
+          </div>
         </div>
 
         {/* Size input — whole row is the input */}
@@ -948,7 +991,6 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
                   grid
                   formatValue={fmtChartValue}
                   window={currentWindow}
-                  orderbook={orderbookData}
                 />
               ) : (
                 <div className="ll-multi" style={{ width: "100%", height: "100%" }}>
@@ -1020,8 +1062,8 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
           {/* Market description */}
           {market && <MarketDetails description={market.description} />}
 
-          {/* Outcome rows */}
-          {market && (
+          {/* Outcome rows — not shown for moneyline binary (non-Yes/No) */}
+          {market && (!market.isBinary || market.options[0]?.name.toLowerCase() === "yes") && (
             <OutcomeRows
               market={market}
               selectedOutcomeIdx={tradeOutcomeIdx}

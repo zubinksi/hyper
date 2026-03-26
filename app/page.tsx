@@ -445,7 +445,6 @@ export default function Page() {
                   grid
                   formatValue={fmtChartValue}
                   window={currentWindow}
-                  orderbook={orderbookData}
                 />
               ) : (
                 <div className="ll-multi" style={{ width: "100%", height: "100%" }}>
@@ -516,8 +515,8 @@ export default function Page() {
       </div>
 
       {/* Markets list */}
-      <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 0 }}>
-        {markets.map((m, i) => (
+      <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+        {markets.map((m) => (
           <Link
             key={m.coinId}
             href={`/market/${m.coinId.slice(1)}`}
@@ -525,33 +524,25 @@ export default function Page() {
               textDecoration: "none",
               color: "inherit",
               display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "10px 4px",
-              borderTop: i === 0 ? "none" : "1px solid #f3f4f6",
-              gap: 12,
-              flexWrap: "wrap",
+              flexDirection: "column",
+              padding: "10px 12px",
+              border: "1px solid #e5e7eb",
+              borderRadius: 10,
+              gap: 6,
               cursor: "pointer",
             }}
           >
-            {/* Name + outcomes */}
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4, flex: 1, minWidth: 0 }}>
-              <span
-                style={{
-                  fontWeight: 600,
-                  fontSize: "13px",
-                  color: "#111",
-                }}
-              >
-                {m.question}
-              </span>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                <OutcomeDots options={m.options} isBinary={m.isBinary} />
-              </div>
+            {/* Question */}
+            <span style={{ fontWeight: 600, fontSize: "13px", color: "#111" }}>
+              {m.question}
+            </span>
+            {/* First two outcomes */}
+            <div style={{ display: "flex", flexWrap: "nowrap", gap: 10 }}>
+              <OutcomeDots options={m.options.slice(0, 2)} isBinary={m.isBinary} />
             </div>
             {/* Volume */}
-            <span style={{ fontSize: "11px", color: "#9ca3af", flexShrink: 0 }}>
-              {fmtVolume(m.volume)}
+            <span style={{ fontSize: "11px", color: "#9ca3af" }}>
+              Vol {fmtVolume(m.volume)}
             </span>
           </Link>
         ))}
