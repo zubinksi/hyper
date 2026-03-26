@@ -163,11 +163,11 @@ export default function Page() {
       postInfo<HLCandle[]>(
         { type: "candleSnapshot", req: { coin: apiCoin, interval: "1h", startTime, endTime } }
       ).then((data) => {
-        if (!data?.length || selectedCoinRef.current !== selectedCoin) return;
-        const tickPts = data.map((c) => ({
-          time:  Math.floor(c.t / 1000),
-          value: parseFloat(c.c),
-        }));
+        if (!Array.isArray(data) || !data.length || selectedCoinRef.current !== selectedCoin) return;
+        const tickPts = data
+          .map((c) => ({ time: Math.floor(c.t / 1000), value: parseFloat(c.c) }))
+          .filter((p) => isFinite(p.value))
+          .slice(-500);
         const last = tickPts[tickPts.length - 1];
         setTicks(tickPts);
         setLatestTick(last.value);
@@ -214,12 +214,6 @@ export default function Page() {
 
     ws.onopen = () => {
       ws.send(JSON.stringify({ method: "subscribe", subscription: { type: "allMids" } }));
-      if (market?.isBinary) {
-        ws.send(JSON.stringify({
-          method: "subscribe",
-          subscription: { type: "candle", coin: market.coinId, interval: "1h" },
-        }));
-      }
     };
 
     ws.onmessage = (event) => {
@@ -229,12 +223,22 @@ export default function Page() {
         if (msg.channel === "allMids" && msg.data?.mids) {
           const mids = msg.data.mids as Record<string, string>;
 
+          // Update latestTick for the currently displayed binary chart
+          const raw = mids[selectedCoinRef.current];
+          if (raw) {
+            const val = parseFloat(raw);
+            if (isFinite(val)) {
+              setLatestTick(val);
+              latestTickRef.current = val;
+            }
+          }
+
           setMarkets((prev) =>
             prev.map((m) => {
               const updatedOptions = m.options.map((opt) => {
-                const raw = mids[opt.coinId];
-                if (!raw) return opt;
-                return { ...opt, price: parseFloat(raw) };
+                const r = mids[opt.coinId];
+                if (!r) return opt;
+                return { ...opt, price: parseFloat(r) };
               });
               if (m.isBinary && updatedOptions[0].price > 0 && !mids[updatedOptions[1].coinId]) {
                 updatedOptions[1] = { ...updatedOptions[1], price: 1 - updatedOptions[0].price };
@@ -245,32 +249,10 @@ export default function Page() {
 
           setMultiSeries((prev) =>
             prev.map((s) => {
-              const raw = mids[s.id];
-              return raw ? { ...s, value: parseFloat(raw) } : s;
+              const r = mids[s.id];
+              return r ? { ...s, value: parseFloat(r) } : s;
             })
           );
-        }
-
-        if (msg.channel === "candle" && msg.data) {
-          const c = msg.data as HLCandle & { s: string };
-          if (c.s !== selectedApiCoinRef.current) return;
-
-          const nowTime  = Math.floor(c.t / 1000);
-          const closeVal = parseFloat(c.c);
-
-          setLatestTick(closeVal);
-          latestTickRef.current = closeVal;
-
-          setTicks((prev) => {
-            const tick: LivelinePoint = { time: nowTime, value: closeVal };
-            if (prev.length > 0 && prev[prev.length - 1].time >= nowTime) {
-              return [...prev.slice(0, -1), tick];
-            }
-            if (prevCandleTimeRef.current > 0 && nowTime > prevCandleTimeRef.current) {
-              prevCandleTimeRef.current = nowTime;
-            }
-            return [...prev.slice(-500), tick];
-          });
         }
       } catch {
         // ignore
