@@ -3,17 +3,17 @@
  *
  * Chain ID: 998
  * RPC: https://rpc.hyperliquid-testnet.xyz/evm
+ *
+ * Note: USDH is a HyperCore native token (not an EVM ERC-20 contract).
+ * Its balance is read via the HyperCore info API (spotClearinghouseState).
  */
 
 const EVM_RPC = "https://rpc.hyperliquid-testnet.xyz/evm";
+const HL_TESTNET_INFO = "https://api.hyperliquid-testnet.xyz/info";
 
-// ERC-20 USDH token on HyperEVM testnet
-export const USDH_ADDRESS = "0x471fd4480bb9943a1fe080ab0d4ff36c";
-// ERC-1155 outcome markets contract
+// ERC-1155 outcome markets contract on HyperEVM
 export const OUTCOME_CONTRACT = "0x6d86b21e853758f5719408633e6bcb2cfd50cf07";
 
-// USDH uses 6 decimals (matches USDC convention)
-const USDH_DECIMALS = 6;
 // Outcome token decimals — adjust if balances appear scaled incorrectly
 const OUTCOME_DECIMALS = 6;
 
@@ -47,16 +47,19 @@ export function coinIdToTokenId(coinId: string): bigint {
 }
 
 /**
- * Fetch USDH balance (ERC-20 balanceOf) for an address.
- * Returns balance in human-readable USDH units.
+ * Fetch USDH balance for an address via the HyperCore info API.
+ * USDH is a HyperCore native token (spotSend type), not an EVM ERC-20.
  */
 export async function fetchUsdhBalance(address: string): Promise<number> {
   try {
-    // balanceOf(address)  selector: 0x70a08231
-    const data = "0x70a08231" + pad32(address);
-    const result = await evmCall(USDH_ADDRESS, data);
-    if (!result || result === "0x") return 0;
-    return Number(BigInt(result)) / 10 ** USDH_DECIMALS;
+    const res = await fetch(HL_TESTNET_INFO, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "spotClearinghouseState", user: address }),
+    });
+    const data = await res.json() as { balances?: { coin: string; total: string }[] };
+    const entry = data.balances?.find((b) => b.coin === "USDH");
+    return entry ? parseFloat(entry.total) : 0;
   } catch {
     return 0;
   }
