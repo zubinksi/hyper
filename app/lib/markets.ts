@@ -160,8 +160,6 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   const spotIndexMap: Record<string, number> = {};
   const priceMap = new Map<string, AssetCtx>();
 
-  console.log("[markets] spotMeta.universe length:", spotMeta.universe?.length, "first 3:", spotMeta.universe?.slice(0, 3).map(u => u.name));
-
   spotMeta.universe.forEach((u, i) => {
     // Always index by the full pair name
     spotIndexMap[u.name] = i;
@@ -180,6 +178,14 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
     if (slashBase !== u.name) {
       if (spotIndexMap[slashBase] === undefined) spotIndexMap[slashBase] = i;
       if (!priceMap.has(slashBase)) priceMap.set(slashBase, spotCtxs[i]);
+    }
+
+    // Prediction market pairs are named "@N" in the universe but "#N" on the book.
+    // Add a "#N" alias so that book coinIds resolve to the correct universe index.
+    if (u.name.startsWith("@")) {
+      const hashAlias = "#" + u.name.slice(1);
+      if (spotIndexMap[hashAlias] === undefined) spotIndexMap[hashAlias] = i;
+      if (!priceMap.has(hashAlias)) priceMap.set(hashAlias, spotCtxs[i]);
     }
   });
 
