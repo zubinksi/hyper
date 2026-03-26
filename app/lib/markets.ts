@@ -160,6 +160,8 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   const spotIndexMap: Record<string, number> = {};
   const priceMap = new Map<string, AssetCtx>();
 
+  console.log("[markets] spotMeta.universe length:", spotMeta.universe?.length, "first 3:", spotMeta.universe?.slice(0, 3).map(u => u.name));
+
   spotMeta.universe.forEach((u, i) => {
     // Always index by the full pair name
     spotIndexMap[u.name] = i;
