@@ -172,6 +172,8 @@ function TradingPanel({
     setTradeStatus("pending");
     setTradeMsg("");
 
+    console.log("[trade] tradingCoinId:", tradingCoinId, "spotIndex:", spotIndex, "spotIndexMap keys:", Object.keys(spotIndexMap).filter(k => k.startsWith("#")).slice(0, 10));
+
     const result = await signAndSubmitOrder({
       walletProvider,
       spotIndex,
