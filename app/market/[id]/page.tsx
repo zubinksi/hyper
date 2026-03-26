@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { use } from "react";
-import type { LivelinePoint, LivelineSeries } from "liveline";
+import type { LivelinePoint, LivelineSeries, OrderbookData } from "liveline";
 import {
   postInfo,
   fetchPredictMarkets,
@@ -23,10 +23,15 @@ const Liveline = dynamic(
   { ssr: false }
 );
 
-const WINDOWS = [
+const WINDOWS_STANDARD  = [
   { label: "1d", secs: 86400 },
   { label: "3d", secs: 259200 },
   { label: "7d", secs: 604800 },
+];
+const WINDOWS_RECURRING = [
+  { label: "1h",  secs: 3600 },
+  { label: "6h",  secs: 21600 },
+  { label: "1d",  secs: 86400 },
 ];
 
 /* ─── Outcome dots ───────────────────────────────────────────── */
@@ -601,6 +606,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
   const [spotIndexMap, setSpotIndexMap] = useState<Record<string, number>>({});
   const [loading, setLoading]       = useState(true);
   const [currentWindow, setCurrentWindow] = useState(86400);
+  const [orderbookData, setOrderbookData] = useState<OrderbookData | undefined>(undefined);
 
   // Chart state
   const [ticks, setTicks]             = useState<LivelinePoint[]>([]);
@@ -627,6 +633,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
   const selectedApiCoinRef = useRef(coinId);
   const prevCandleTimeRef = useRef(0);
   const latestTickRef     = useRef(0);
+  const orderbookIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Fetch markets
   useEffect(() => {
@@ -698,6 +705,41 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
         setLoading(false);
       });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [market?.coinId]);
+
+  // Reset time window and poll orderbook when market changes
+  useEffect(() => {
+    if (orderbookIntervalRef.current) {
+      clearInterval(orderbookIntervalRef.current);
+      orderbookIntervalRef.current = null;
+    }
+    setOrderbookData(undefined);
+    if (!market) return;
+
+    const wins = market.isRecurring ? WINDOWS_RECURRING : WINDOWS_STANDARD;
+    setCurrentWindow(wins[1].secs); // default to middle option
+
+    if (!market.isRecurring || market.options[0]?.name.toLowerCase() !== "yes") return;
+    const coin = market.coinId;
+
+    async function fetchBook() {
+      try {
+        const res = await postInfo<{ levels: Array<Array<{ px: string; sz: string }>> }>({
+          type: "l2Book",
+          coin,
+        });
+        const bids: [number, number][] = (res.levels?.[0] ?? []).map((l) => [parseFloat(l.px), parseFloat(l.sz)]);
+        const asks: [number, number][] = (res.levels?.[1] ?? []).map((l) => [parseFloat(l.px), parseFloat(l.sz)]);
+        setOrderbookData({ bids, asks });
+      } catch { /* ignore */ }
+    }
+
+    fetchBook();
+    orderbookIntervalRef.current = setInterval(fetchBook, 3000);
+    return () => {
+      if (orderbookIntervalRef.current) clearInterval(orderbookIntervalRef.current);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [market?.coinId]);
 
@@ -906,6 +948,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
                   grid
                   formatValue={fmtChartValue}
                   window={currentWindow}
+                  orderbook={orderbookData}
                 />
               ) : (
                 <div className="ll-multi" style={{ width: "100%", height: "100%" }}>
@@ -952,7 +995,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
               Vol {market ? fmtVolume(market.volume) : "—"}
             </span>
             <div style={{ display: "flex", gap: 2 }}>
-              {WINDOWS.map((w) => (
+              {(market?.isRecurring ? WINDOWS_RECURRING : WINDOWS_STANDARD).map((w) => (
                 <button
                   key={w.secs}
                   onClick={() => setCurrentWindow(w.secs)}

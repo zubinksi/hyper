@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { useWallet } from "./lib/wallet-context";
 import { Stepper, useAutoPlay } from "pasito";
 import "pasito/styles.css";
-import type { LivelinePoint, LivelineSeries } from "liveline";
+import type { LivelinePoint, LivelineSeries, OrderbookData } from "liveline";
 import {
   fetchPredictMarkets,
   postInfo,
@@ -24,10 +24,15 @@ const Liveline = dynamic(
   { ssr: false }
 );
 
-const WINDOWS = [
+const WINDOWS_STANDARD  = [
   { label: "1d", secs: 86400 },
   { label: "3d", secs: 259200 },
   { label: "7d", secs: 604800 },
+];
+const WINDOWS_RECURRING = [
+  { label: "1h",  secs: 3600 },
+  { label: "6h",  secs: 21600 },
+  { label: "1d",  secs: 86400 },
 ];
 
 function OutcomeDots({ options, isBinary }: { options: OutcomeOption[]; isBinary: boolean }) {
@@ -88,12 +93,14 @@ export default function Page() {
   const [multiSeries, setMultiSeries] = useState<LivelineSeries[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentWindow, setCurrentWindow] = useState(86400);
+  const [orderbookData, setOrderbookData] = useState<OrderbookData | undefined>(undefined);
 
   const wsRef = useRef<WebSocket | null>(null);
   const selectedCoinRef = useRef("");
   const selectedApiCoinRef = useRef("");
   const prevCandleTimeRef = useRef(0);
   const latestTickRef = useRef(0);
+  const orderbookIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const topMarkets = markets.slice(0, 6);
 
@@ -201,6 +208,46 @@ export default function Page() {
         setLoading(false);
       });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCoin]);
+
+  // Reset time window and poll orderbook when selected market changes
+  useEffect(() => {
+    // Clear any existing orderbook poll
+    if (orderbookIntervalRef.current) {
+      clearInterval(orderbookIntervalRef.current);
+      orderbookIntervalRef.current = null;
+    }
+    setOrderbookData(undefined);
+
+    const market = markets.find((m) => m.coinId === selectedCoin);
+    if (!market) return;
+
+    // Reset window to the appropriate default
+    const wins = market.isRecurring ? WINDOWS_RECURRING : WINDOWS_STANDARD;
+    setCurrentWindow(wins[1].secs); // default to middle option
+
+    // Poll orderbook for yes/no binary recurring markets
+    if (!market.isRecurring || market.options[0]?.name.toLowerCase() !== "yes") return;
+    const coin = market.coinId;
+
+    async function fetchBook() {
+      try {
+        const res = await postInfo<{ levels: Array<Array<{ px: string; sz: string }>> }>({
+          type: "l2Book",
+          coin,
+        });
+        const bids: [number, number][] = (res.levels?.[0] ?? []).map((l) => [parseFloat(l.px), parseFloat(l.sz)]);
+        const asks: [number, number][] = (res.levels?.[1] ?? []).map((l) => [parseFloat(l.px), parseFloat(l.sz)]);
+        setOrderbookData({ bids, asks });
+      } catch { /* ignore */ }
+    }
+
+    fetchBook();
+    orderbookIntervalRef.current = setInterval(fetchBook, 3000);
+    return () => {
+      if (orderbookIntervalRef.current) clearInterval(orderbookIntervalRef.current);
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCoin]);
 
@@ -398,6 +445,7 @@ export default function Page() {
                   grid
                   formatValue={fmtChartValue}
                   window={currentWindow}
+                  orderbook={orderbookData}
                 />
               ) : (
                 <div className="ll-multi" style={{ width: "100%", height: "100%" }}>
@@ -430,7 +478,7 @@ export default function Page() {
             Vol {selectedMarket ? fmtVolume(selectedMarket.volume) : "—"}
           </span>
           <div style={{ display: "flex", gap: 2 }}>
-            {WINDOWS.map((w) => (
+            {(selectedMarket?.isRecurring ? WINDOWS_RECURRING : WINDOWS_STANDARD).map((w) => (
               <button
                 key={w.secs}
                 onClick={() => setCurrentWindow(w.secs)}

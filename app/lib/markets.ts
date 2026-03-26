@@ -16,6 +16,7 @@ export interface Market {
   volume: number;
   options: OutcomeOption[];
   isBinary: boolean;
+  isRecurring?: boolean;
   description?: string;
 }
 
@@ -238,12 +239,15 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
       ? entry.description
       : undefined;
 
+    const isRecurring = entry.name === "Recurring" && !!entry.description;
+
     const market: Market = {
       question,
       coinId: `#${enc0}`,
       testnet: true,
       volume: volOf(ctx0) + volOf(ctx1),
       isBinary: true,
+      isRecurring,
       options: [
         { name: entry.sideSpecs[0]?.name ?? "Yes", coinId: `#${enc0}`, price: price0 },
         { name: entry.sideSpecs[1]?.name ?? "No",  coinId: `#${enc1}`, price: price1 },
@@ -251,8 +255,8 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
       description: desc,
     };
 
-    if (entry.name === "Recurring" && entry.description) {
-      const meta = parseRecurringMeta(entry.description);
+    if (isRecurring) {
+      const meta = parseRecurringMeta(entry.description!);
       if (!meta) continue; // malformed — skip
       if (meta.expiryMs < Date.now()) continue; // already expired — skip
       // Keep only the soonest-expiring active version per underlying
