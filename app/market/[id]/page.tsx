@@ -32,7 +32,8 @@ const WINDOWS = [
 /* ─── Outcome dots ───────────────────────────────────────────── */
 
 function OutcomeDots({ options, isBinary }: { options: OutcomeOption[]; isBinary: boolean }) {
-  const colors = isBinary ? ["#16a34a", "#dc2626"] : MULTI_COLORS;
+  const isYesNo = isBinary && options[0]?.name.toLowerCase() === "yes";
+  const colors = isYesNo ? ["#16a34a", "#dc2626"] : MULTI_COLORS;
   return (
     <>
       {options.map((opt, i) => (
@@ -444,6 +445,47 @@ function OutcomeRows({
   selectedSide: "yes" | "no";
   onSelect: (outcomeIdx: number, side: "yes" | "no") => void;
 }) {
+  const isMoneyline = market.isBinary && market.options[0]?.name.toLowerCase() !== "yes";
+
+  // Moneyline binary: two side-by-side "Buy [Outcome]" buttons
+  if (isMoneyline) {
+    return (
+      <div style={{ borderTop: "1px solid #f3f4f6", padding: "10px 16px" }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          {market.options.map((opt, i) => {
+            const side: "yes" | "no" = i === 0 ? "yes" : "no";
+            const isActive = selectedSide === side;
+            const cents = (opt.price * 100).toFixed(opt.price < 0.1 ? 1 : 0);
+            const color = MULTI_COLORS[i % MULTI_COLORS.length];
+            return (
+              <button
+                key={opt.coinId}
+                onClick={() => onSelect(0, side)}
+                style={{
+                  flex: 1,
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  border: `1px solid ${isActive ? color : "#e5e7eb"}`,
+                  background: isActive ? color : "#f9fafb",
+                  color: isActive ? "#fff" : "#374151",
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  textAlign: "center",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {opt.name} <span style={{ fontWeight: 700 }}>{cents}¢</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // Yes/No binary or multi-outcome
   const rows = market.isBinary
     ? [{ name: market.options[0].name, yesPrice: market.options[0].price, noPrice: market.options[1].price, idx: 0 }]
     : market.options.map((opt, i) => ({
@@ -611,7 +653,9 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
     const endTime   = Date.now();
     const startTime = endTime - 8 * 24 * 60 * 60 * 1000;
 
-    if (market.isBinary) {
+    const isYesNoBinary = market.isBinary && market.options[0]?.name.toLowerCase() === "yes";
+
+    if (isYesNoBinary) {
       selectedApiCoinRef.current = market.coinId;
 
       postInfo<HLCandle[]>({
@@ -637,7 +681,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
           postInfo<HLCandle[]>({
             type: "candleSnapshot",
             req: { coin: opt.coinId, interval: "1h", startTime, endTime },
-          }).then((d) => d ?? [])
+          }).then((d) => Array.isArray(d) ? d : [])
         )
       ).then((allData) => {
         const series: LivelineSeries[] = market.options.map((opt, i) => ({
@@ -645,10 +689,10 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
           label: opt.name,
           color: MULTI_COLORS[i % MULTI_COLORS.length],
           value: opt.price,
-          data:  allData[i].map((c) => ({
-            time:  Math.floor(c.t / 1000),
-            value: parseFloat(c.c),
-          })),
+          data:  allData[i]
+            .map((c) => ({ time: Math.floor(c.t / 1000), value: parseFloat(c.c) }))
+            .filter((p) => isFinite(p.value))
+            .slice(-500),
         }));
         setMultiSeries(series);
         setLoading(false);
@@ -852,7 +896,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
           {/* Chart */}
           <div className="chart-area" style={{ width: "100%", padding: "0" }}>
             {market ? (
-              market.isBinary ? (
+              market.isBinary && market.options[0]?.name.toLowerCase() === "yes" ? (
                 <Liveline
                   data={ticks}
                   value={latestTick}

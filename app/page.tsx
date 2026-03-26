@@ -31,7 +31,8 @@ const WINDOWS = [
 ];
 
 function OutcomeDots({ options, isBinary }: { options: OutcomeOption[]; isBinary: boolean }) {
-  const colors = isBinary ? ["#16a34a", "#dc2626"] : MULTI_COLORS;
+  const isYesNo = isBinary && options[0]?.name.toLowerCase() === "yes";
+  const colors = isYesNo ? ["#16a34a", "#dc2626"] : MULTI_COLORS;
   return (
     <>
       {options.map((opt, i) => (
@@ -156,7 +157,9 @@ export default function Page() {
     const endTime   = Date.now();
     const startTime = endTime - 8 * 24 * 60 * 60 * 1000;
 
-    if (market.isBinary) {
+    const isYesNoBinary = market.isBinary && market.options[0]?.name.toLowerCase() === "yes";
+
+    if (isYesNoBinary) {
       const apiCoin = market.coinId;
       selectedApiCoinRef.current = apiCoin;
 
@@ -385,7 +388,7 @@ export default function Page() {
           {/* Chart */}
           <div className="chart-area" style={{ width: "100%" }}>
             {selectedCoin && selectedMarket && (
-              selectedMarket.isBinary ? (
+              selectedMarket.isBinary && selectedMarket.options[0]?.name.toLowerCase() === "yes" ? (
                 <Liveline
                   data={ticks}
                   value={latestTick}
