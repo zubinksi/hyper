@@ -247,15 +247,14 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   const recurringByUnderlying = new Map<string, { expiryMs: number; market: Market }>();
 
   // Log all binary outcome IDs to understand the encoding scheme
-  console.log("[markets] Binary outcomes (first 10):", meta.outcomes.slice(0, 10).map((e) => ({
+  console.table(meta.outcomes.slice(0, 15).map((e) => ({
     outcome: e.outcome,
-    name: e.name,
-    enc0: 10 * e.outcome,
-    enc1: 10 * e.outcome + 1,
-    inPriceMap0: priceMap.has(`#${10 * e.outcome}`),
-    inSpotIdx0:  spotIndexMap[`#${10 * e.outcome}`] !== undefined,
-    inPriceMapDirect: priceMap.has(`#${e.outcome}`),
-    inSpotIdxDirect:  spotIndexMap[`#${e.outcome}`] !== undefined,
+    name: e.name.slice(0, 30),
+    "enc0=10x": 10 * e.outcome,
+    "priceMap[10x]": priceMap.has(`#${10 * e.outcome}`),
+    "spotIdx[10x]": spotIndexMap[`#${10 * e.outcome}`] ?? "MISSING",
+    "priceMap[1x]": priceMap.has(`#${e.outcome}`),
+    "spotIdx[1x]": spotIndexMap[`#${e.outcome}`] ?? "MISSING",
   })));
 
   for (const entry of meta.outcomes) {
