@@ -162,15 +162,23 @@ export async function signAndSubmitOrder({
     return { success: false, message: "Size must be greater than zero" };
   }
 
-  try {
-    const { BrowserProvider, JsonRpcSigner } = await import("ethers");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ethersProvider = new BrowserProvider(walletProvider as any);
-    // Construct signer directly — avoids the eth_requestAccounts round-trip
-    // that BrowserProvider.getSigner() triggers in ethers v6.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const signer = new JsonRpcSigner(ethersProvider as any, signerAddress);
+  // Typed data JSON for eth_signTypedData_v4 — constructed once, reused per attempt
+  const eip712Payload = {
+    types: {
+      EIP712Domain: [
+        { name: "name",             type: "string"  },
+        { name: "version",          type: "string"  },
+        { name: "chainId",          type: "uint256" },
+        { name: "verifyingContract",type: "address" },
+      ],
+      Agent: AGENT_TYPES.Agent,
+    },
+    primaryType: "Agent",
+    domain: AGENT_DOMAIN,
+    // message filled per-attempt below
+  };
 
+  try {
     const assetId = SPOT_ASSET_BASE + spotIndex;
 
     // 10% slippage ceiling for IOC — wide enough to sweep through spreads.
@@ -209,16 +217,19 @@ export async function signAndSubmitOrder({
       const hashBytes = computeActionHash(action, null, nonce);
       const connectionId = zeroPadValue(hexlify(hashBytes), 32);
 
-      // "b" = testnet source identifier
-      const phantomAgent = { source: "b", connectionId };
+      // Call eth_signTypedData_v4 directly on the raw EIP-1193 provider —
+      // bypasses ethers BrowserProvider/getSigner which triggers extra RPC
+      // calls (eth_requestAccounts, network detection) that can hang.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sigHex: string = await (walletProvider as any).request({
+        method: "eth_signTypedData_v4",
+        params: [
+          signerAddress,
+          JSON.stringify({ ...eip712Payload, message: { source: "b", connectionId } }),
+        ],
+      });
 
-      const sigHex: string = await signer.signTypedData(
-        AGENT_DOMAIN,
-        AGENT_TYPES,
-        phantomAgent
-      );
-
-      // ethers returns 65-byte signature as 0x + r(32) + s(32) + v(1)
+      // 65-byte signature: 0x + r(32) + s(32) + v(1)
       const r = sigHex.slice(0, 66);
       const s = "0x" + sigHex.slice(66, 130);
       const v = parseInt(sigHex.slice(130, 132), 16);
