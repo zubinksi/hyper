@@ -133,6 +133,10 @@ function TradingPanel({
 
   const spotIndex  = spotIndexMap[tradingCoinId] ?? -1;
   const szDecimals = szDecimalsMap[tradingCoinId] ?? 0;
+  if (spotIndex === -1) {
+    console.warn("[Trade] coinId not in spotIndexMap:", tradingCoinId,
+      "keys sample:", Object.keys(spotIndexMap).slice(0, 20));
+  }
   const shares     = parseFloat(sharesInput) || 0;
   const limitPrice = parseFloat(limitPriceInput) || 0;
 

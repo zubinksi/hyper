@@ -168,6 +168,15 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
     if (szDecimalsMap[key] === undefined) szDecimalsMap[key] = szDec;
   };
 
+  // Log first few outcome-market universe entries so we can see the naming format
+  const sampleOutcomeEntries = spotMeta.universe.filter((u) => u.name.startsWith("@")).slice(0, 3);
+  if (sampleOutcomeEntries.length > 0) {
+    console.log("[markets] Sample @-prefixed universe entries:", sampleOutcomeEntries.map((u, i) => ({
+      name: u.name,
+      baseToken: spotMeta.tokens?.[u.tokens?.[0]]?.name,
+    })));
+  }
+
   spotMeta.universe.forEach((u, i) => {
     const baseTokenIdx = u.tokens?.[0];
     const baseToken = baseTokenIdx !== undefined ? spotMeta.tokens?.[baseTokenIdx] : undefined;
