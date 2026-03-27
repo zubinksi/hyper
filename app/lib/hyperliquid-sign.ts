@@ -23,6 +23,18 @@ function floatToWire(x: number): string {
   return rounded.toFixed(8).replace(/\.?0+$/, "");
 }
 
+/**
+ * Round to N significant figures — required for Hyperliquid prices.
+ * Prices that aren't rounded to exactly 5 sig figs are rejected with
+ * "Price must be divisible by tick size."
+ */
+function roundSigFigs(n: number, sigFigs = 5): number {
+  if (n === 0) return 0;
+  const magnitude = Math.floor(Math.log10(Math.abs(n)));
+  const factor = Math.pow(10, sigFigs - 1 - magnitude);
+  return Math.round(n * factor) / factor;
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < hex.length; i += 2) {
@@ -214,11 +226,13 @@ export async function signAndSubmitOrder({
 
   // For market orders: 10% slippage ceiling; capped to outcome token 0–1 USDH range.
   // For limit orders: use the exact user-specified price.
-  const execPx = isLimit
+  // Hyperliquid requires prices rounded to 5 significant figures (tick size rule).
+  const rawPx = isLimit
     ? limitPrice!
     : isBuy
     ? Math.min(price * 1.10, 0.9999)
     : Math.max(price * 0.90, 0.0001);
+  const execPx = roundSigFigs(rawPx, 5);
 
   const eip712Payload = {
     types: {
