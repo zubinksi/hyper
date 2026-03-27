@@ -133,10 +133,6 @@ function TradingPanel({
 
   const spotIndex  = spotIndexMap[tradingCoinId] ?? -1;
   const szDecimals = szDecimalsMap[tradingCoinId] ?? 0;
-  if (spotIndex === -1) {
-    console.warn("[Trade] coinId not in spotIndexMap:", tradingCoinId,
-      "keys sample:", Object.keys(spotIndexMap).slice(0, 20));
-  }
   const shares     = parseFloat(sharesInput) || 0;
   const limitPrice = parseFloat(limitPriceInput) || 0;
 
@@ -290,6 +286,22 @@ function TradingPanel({
       </div>
 
       <div style={{ padding: "16px" }}>
+
+        {/* Not-yet-listed banner */}
+        {spotIndex === -1 && (
+          <div style={{
+            padding: "14px 16px", borderRadius: 8,
+            background: "#f9fafb", border: "1px solid #e5e7eb",
+            fontSize: 13, color: "#6b7280", textAlign: "center", lineHeight: 1.5,
+          }}>
+            This market is not yet open for trading.
+            <br />
+            <span style={{ fontSize: 12 }}>Token not listed in spot universe.</span>
+          </div>
+        )}
+
+        {/* Hide trade form when market is not listed */}
+        {spotIndex !== -1 && <>
 
         {/* Multi-outcome: outcome selector */}
         {!market.isBinary && (
@@ -487,6 +499,8 @@ function TradingPanel({
             )}
           </div>
         )}
+
+        </>}
 
       </div>
     </div>

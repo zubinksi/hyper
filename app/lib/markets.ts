@@ -168,15 +168,6 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
     if (szDecimalsMap[key] === undefined) szDecimalsMap[key] = szDec;
   };
 
-  // Log first few outcome-market universe entries so we can see the naming format
-  const sampleOutcomeEntries = spotMeta.universe.filter((u) => u.name.startsWith("@")).slice(0, 3);
-  if (sampleOutcomeEntries.length > 0) {
-    console.log("[markets] Sample @-prefixed universe entries:", sampleOutcomeEntries.map((u, i) => ({
-      name: u.name,
-      baseToken: spotMeta.tokens?.[u.tokens?.[0]]?.name,
-    })));
-  }
-
   spotMeta.universe.forEach((u, i) => {
     const baseTokenIdx = u.tokens?.[0];
     const baseToken = baseTokenIdx !== undefined ? spotMeta.tokens?.[baseTokenIdx] : undefined;
@@ -246,15 +237,6 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   // (Hyperliquid keeps old + new versions simultaneously; we only want the soonest expiry)
   const recurringByUnderlying = new Map<string, { expiryMs: number; market: Market }>();
 
-  // Targeted: check exact state for recurring outcome token #23400
-  console.log("[markets] Universe total length:", spotMeta.universe.length);
-  const entry23400 = spotMeta.universe.find((u) => u.name.includes("23400"));
-  console.log("[markets] Any universe entry containing '23400':", entry23400);
-  const hashPrefixedSample = spotMeta.universe.filter((u) => u.name.startsWith("#")).slice(0, 5);
-  console.log("[markets] First 5 #-prefixed universe entries:", hashPrefixedSample.map((u) => u.name));
-  console.log("[markets] spotIndexMap['#23400']:", spotIndexMap["#23400"]);
-  console.log("[markets] priceMap.has('#23400'):", priceMap.has("#23400"), "markPx:", priceMap.get("#23400")?.markPx);
-
   for (const entry of meta.outcomes) {
     if (claimedIds.has(entry.outcome)) continue;
 
@@ -309,6 +291,32 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   // Add the single winning recurring market per underlying
   for (const { market } of recurringByUnderlying.values()) {
     markets.push(market);
+  }
+
+  // For binary markets whose YES coin is absent from the spot universe (price = 0),
+  // try activeSpotAssetCtx to get the live mark price.
+  const priceless = markets.filter(
+    (m) => m.isBinary && m.options[0].price === 0 && !priceMap.has(m.options[0].coinId)
+  );
+  if (priceless.length > 0) {
+    await Promise.all(
+      priceless.map(async (m) => {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const ctx = await postInfo<Record<string, any>>({
+            type: "activeSpotAssetCtx",
+            coin: m.options[0].coinId,
+          });
+          const price0 = parseFloat(ctx?.markPx ?? "0") || 0;
+          if (price0 > 0) {
+            m.options[0].price = price0;
+            m.options[1].price = 1 - price0;
+          }
+        } catch {
+          // silently ignore — price stays 0
+        }
+      })
+    );
   }
 
   return {
