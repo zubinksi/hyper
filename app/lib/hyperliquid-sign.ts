@@ -50,10 +50,11 @@ function computeActionHash(
   const nonceBuf = new Uint8Array(8);
   new DataView(nonceBuf.buffer).setBigUint64(0, BigInt(nonce), false); // big-endian
 
-  const combined = new Uint8Array(packed.length + vaultBuf.length + 8);
+  // Order: action | nonce | vaultMarker [| vaultBytes]
+  const combined = new Uint8Array(packed.length + 8 + vaultBuf.length);
   combined.set(packed, 0);
-  combined.set(vaultBuf, packed.length);
-  combined.set(nonceBuf, packed.length + vaultBuf.length);
+  combined.set(nonceBuf, packed.length);
+  combined.set(vaultBuf, packed.length + 8);
 
   return hexToBytes(keccak256(combined).slice(2));
 }
