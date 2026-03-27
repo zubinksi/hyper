@@ -76,6 +76,10 @@ const AGENT_TYPES = {
 export interface OrderParams {
   /** Raw EIP-1193 provider (window.ethereum or WalletConnect EthereumProvider) */
   walletProvider: object;
+  /** API wallet private key (optional). When provided, orders are signed by the
+   *  API wallet instead of the MetaMask wallet, which is required if the main
+   *  wallet is not directly registered as a Hyperliquid user. */
+  apiPrivateKey?: string;
   /** Index in spotMeta.universe for the token being traded */
   spotIndex: number;
   isBuy: boolean;
@@ -145,6 +149,7 @@ export async function estimateSlippage(
 
 export async function signAndSubmitOrder({
   walletProvider,
+  apiPrivateKey,
   spotIndex,
   isBuy,
   price,
@@ -189,16 +194,20 @@ export async function signAndSubmitOrder({
   const phantomAgent = { source: "b", connectionId };
 
   try {
-    const { BrowserProvider } = await import("ethers");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ethersProvider = new BrowserProvider(walletProvider as any);
-    const signer = await ethersProvider.getSigner();
+    const { BrowserProvider, Wallet } = await import("ethers");
 
-    const sigHex: string = await signer.signTypedData(
-      AGENT_DOMAIN,
-      AGENT_TYPES,
-      phantomAgent
-    );
+    let sigHex: string;
+    if (apiPrivateKey) {
+      // Sign with API wallet private key (agent wallet authorized on Hyperliquid)
+      const apiWallet = new Wallet(apiPrivateKey);
+      sigHex = await apiWallet.signTypedData(AGENT_DOMAIN, AGENT_TYPES, phantomAgent);
+    } else {
+      // Sign with MetaMask (requires main wallet to be registered as a Hyperliquid user)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ethersProvider = new BrowserProvider(walletProvider as any);
+      const signer = await ethersProvider.getSigner();
+      sigHex = await signer.signTypedData(AGENT_DOMAIN, AGENT_TYPES, phantomAgent);
+    }
 
     // ethers returns 65-byte signature as 0x + r(32) + s(32) + v(1)
     const r = sigHex.slice(0, 66);           // 0x + 64 hex chars

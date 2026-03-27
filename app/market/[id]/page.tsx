@@ -101,6 +101,9 @@ function TradingPanel({
   const [slippage, setSlippage] = useState<number | null>(null);
   const [usdhBalance, setUsdhBalance] = useState<number | null>(null);
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
+  const [apiKey, setApiKey] = useState(() =>
+    typeof sessionStorage !== "undefined" ? sessionStorage.getItem("hl_api_key") ?? "" : ""
+  );
 
   // Reset status when inputs change
   useEffect(() => { setTradeStatus("idle"); setTradeMsg(""); }, [side, selectedOutcomeIdx, selectedSide, quantity]);
@@ -174,6 +177,7 @@ function TradingPanel({
 
     const result = await signAndSubmitOrder({
       walletProvider,
+      apiPrivateKey: apiKey || undefined,
       spotIndex,
       isBuy: side === "buy",
       price: tradingPrice,
@@ -455,6 +459,41 @@ function TradingPanel({
               <span style={{ color: valueColor, fontWeight: 500 }}>{value}</span>
             </div>
           ))}
+        </div>
+
+        {/* API wallet key */}
+        <div
+          style={{
+            marginTop: 12,
+            paddingTop: 12,
+            borderTop: "1px solid #f3f4f6",
+          }}
+        >
+          <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 5 }}>
+            API Wallet Private Key{" "}
+            <span style={{ color: "#d1d5db" }}>(required — no withdrawal perms)</span>
+          </div>
+          <input
+            type="password"
+            placeholder="0x…"
+            value={apiKey}
+            onChange={(e) => {
+              setApiKey(e.target.value);
+              sessionStorage.setItem("hl_api_key", e.target.value);
+            }}
+            style={{
+              width: "100%",
+              padding: "8px 10px",
+              borderRadius: 7,
+              border: `1px solid ${apiKey ? "#16a34a" : "#e5e7eb"}`,
+              fontSize: 12,
+              fontFamily: "monospace",
+              background: "#f9fafb",
+              color: "#111",
+              boxSizing: "border-box",
+              outline: "none",
+            }}
+          />
         </div>
       </div>
     </div>
