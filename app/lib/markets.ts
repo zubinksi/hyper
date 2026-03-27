@@ -246,13 +246,15 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   // (Hyperliquid keeps old + new versions simultaneously; we only want the soonest expiry)
   const recurringByUnderlying = new Map<string, { expiryMs: number; market: Market }>();
 
-  // Log raw outcomeMeta for the first few outcomes — shows actual sideSpecs structure
-  console.log("[markets] Raw outcomeMeta outcomes (first 5):", JSON.stringify(meta.outcomes.slice(0, 5), null, 2));
-  // Log specifically: all @-prefixed universe entries (not just first 3)
-  const allAtEntries = spotMeta.universe
-    .map((u, i) => ({ name: u.name, baseToken: spotMeta.tokens?.[u.tokens?.[0]]?.name, i }))
-    .filter((x) => x.name.startsWith("@"));
-  console.log("[markets] ALL @-prefixed universe entries:", allAtEntries);
+  // Log the raw recurring outcome objects — captures any extra API fields our type misses
+  const recurringOutcomes = meta.outcomes.filter((e) => e.name === "Recurring");
+  console.log("[markets] Raw recurring outcomes:", JSON.stringify(recurringOutcomes, null, 2));
+  // Log the last 20 universe @-entries (the ones with undefined base tokens)
+  const lastAtEntries = spotMeta.universe
+    .map((u, i) => ({ name: u.name, baseToken: spotMeta.tokens?.[u.tokens?.[0]]?.name, i, tokens: u.tokens }))
+    .filter((x) => x.name.startsWith("@"))
+    .slice(-20);
+  console.log("[markets] Last 20 @-prefixed universe entries:", lastAtEntries);
 
   for (const entry of meta.outcomes) {
     if (claimedIds.has(entry.outcome)) continue;
