@@ -122,6 +122,8 @@ export interface MarketsResult {
   markets: Market[];
   /** coinId → index in spotMeta.universe (needed for order placement) */
   spotIndexMap: Record<string, number>;
+  /** coinId → szDecimals for the base token (controls valid order size precision) */
+  szDecimalsMap: Record<string, number>;
 }
 
 export async function fetchPredictMarkets(): Promise<MarketsResult> {
@@ -150,7 +152,7 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
 
   const spotMeta = spotMetaRaw as {
     universe: { name: string; tokens: number[] }[];
-    tokens: { name: string }[];
+    tokens: { name: string; szDecimals: number }[];
   };
 
   // Build index maps.  The spot universe lists PAIRS (e.g. "#20490/USDH") while
@@ -158,25 +160,34 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   // We resolve via spotMeta.tokens[pair.tokens[0]].name so we match regardless
   // of the quote currency or pair-name format.
   const spotIndexMap: Record<string, number> = {};
+  const szDecimalsMap: Record<string, number> = {};
   const priceMap = new Map<string, AssetCtx>();
 
+  const registerAlias = (key: string, i: number, szDec: number) => {
+    if (spotIndexMap[key] === undefined) spotIndexMap[key] = i;
+    if (szDecimalsMap[key] === undefined) szDecimalsMap[key] = szDec;
+  };
+
   spotMeta.universe.forEach((u, i) => {
+    const baseTokenIdx = u.tokens?.[0];
+    const baseToken = baseTokenIdx !== undefined ? spotMeta.tokens?.[baseTokenIdx] : undefined;
+    const szDec = baseToken?.szDecimals ?? 0;
+
     // Always index by the full pair name
     spotIndexMap[u.name] = i;
+    szDecimalsMap[u.name] = szDec;
     priceMap.set(u.name, spotCtxs[i]);
 
     // Index by base token name from the tokens sub-array (most reliable)
-    const baseTokenIdx = u.tokens?.[0];
-    if (baseTokenIdx !== undefined && spotMeta.tokens?.[baseTokenIdx]) {
-      const baseName = spotMeta.tokens[baseTokenIdx].name;
-      spotIndexMap[baseName] = i;
-      priceMap.set(baseName, spotCtxs[i]);
+    if (baseToken) {
+      registerAlias(baseToken.name, i, szDec);
+      priceMap.set(baseToken.name, spotCtxs[i]);
     }
 
     // Fallback: strip everything after "/" in the pair name
     const slashBase = u.name.split("/")[0];
     if (slashBase !== u.name) {
-      if (spotIndexMap[slashBase] === undefined) spotIndexMap[slashBase] = i;
+      registerAlias(slashBase, i, szDec);
       if (!priceMap.has(slashBase)) priceMap.set(slashBase, spotCtxs[i]);
     }
 
@@ -184,7 +195,7 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
     // Add a "#N" alias so that book coinIds resolve to the correct universe index.
     if (u.name.startsWith("@")) {
       const hashAlias = "#" + u.name.slice(1);
-      if (spotIndexMap[hashAlias] === undefined) spotIndexMap[hashAlias] = i;
+      registerAlias(hashAlias, i, szDec);
       if (!priceMap.has(hashAlias)) priceMap.set(hashAlias, spotCtxs[i]);
     }
   });
@@ -285,5 +296,6 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   return {
     markets: markets.sort((a, b) => b.volume - a.volume),
     spotIndexMap,
+    szDecimalsMap,
   };
 }

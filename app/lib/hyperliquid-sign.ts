@@ -174,6 +174,11 @@ export interface OrderParams {
   orderType?: "market" | "limit";
   /** Required when orderType === "limit" */
   limitPrice?: number;
+  /**
+   * Number of decimal places allowed for this token's size (from spotMeta.tokens[].szDecimals).
+   * Defaults to 0 (whole-number sizes only). Hyperliquid rejects sizes with more decimal places.
+   */
+  szDecimals?: number;
 }
 
 export interface OrderResult {
@@ -195,9 +200,14 @@ export async function signAndSubmitOrder({
   size,
   orderType = "market",
   limitPrice,
+  szDecimals = 0,
 }: OrderParams): Promise<OrderResult> {
+  // Round size to the token's allowed decimal precision before any checks.
+  const factor = Math.pow(10, szDecimals);
+  const roundedSize = Math.floor(size * factor) / factor;
+
   if (spotIndex < 0) return { success: false, message: "Token not found in spot universe" };
-  if (size <= 0) return { success: false, message: "Size must be greater than zero" };
+  if (roundedSize <= 0) return { success: false, message: "Order size too small (minimum is 1 share for this token)" };
 
   const isLimit = orderType === "limit" && limitPrice !== undefined && limitPrice > 0;
   const tif = isLimit ? "Gtc" : "Ioc";
@@ -229,7 +239,7 @@ export async function signAndSubmitOrder({
     // Limit orders rest on the book — no retries needed.
     // Market IOC orders retry up to 3× to fill partial liquidity.
     const MAX_RETRIES = isLimit ? 1 : 3;
-    let remaining = size;
+    let remaining = roundedSize;
     let totalFilledSz = 0;
     let weightedPxSum = 0;
     let txHash: string | undefined;
@@ -311,7 +321,8 @@ export async function signAndSubmitOrder({
         if (filledSz > 0) {
           totalFilledSz += filledSz;
           weightedPxSum += filledSz * fillAvgPx;
-          remaining -= filledSz;
+          // Round remaining to szDecimals before next retry
+          remaining = Math.floor((remaining - filledSz) * factor) / factor;
 
           if (!txHash) {
             try {

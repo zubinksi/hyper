@@ -74,6 +74,7 @@ type TradeStatus = "idle" | "pending" | "success" | "error";
 function TradingPanel({
   market,
   spotIndexMap,
+  szDecimalsMap,
   walletAddress,
   walletProvider,
   onConnectWallet,
@@ -86,6 +87,7 @@ function TradingPanel({
 }: {
   market: Market;
   spotIndexMap: Record<string, number>;
+  szDecimalsMap: Record<string, number>;
   walletAddress: string | null;
   walletProvider: object | null;
   onConnectWallet: () => void;
@@ -129,6 +131,7 @@ function TradingPanel({
   }
 
   const spotIndex  = spotIndexMap[tradingCoinId] ?? -1;
+  const szDecimals = szDecimalsMap[tradingCoinId] ?? 0;
   const usd        = parseFloat(usdAmount) || 0;
   const limitPrice = parseFloat(limitPriceInput) || 0;
 
@@ -192,6 +195,7 @@ function TradingPanel({
         size: shares,
         orderType,
         limitPrice: orderType === "limit" ? limitPrice : undefined,
+        szDecimals,
       });
       setTradeStatus(result.success ? "success" : "error");
       setTradeMsg(result.message);
@@ -651,6 +655,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
 
   const [markets, setMarkets]       = useState<Market[]>([]);
   const [spotIndexMap, setSpotIndexMap] = useState<Record<string, number>>({});
+  const [szDecimalsMap, setSzDecimalsMap] = useState<Record<string, number>>({});
   const [loading, setLoading]       = useState(true);
   const [currentWindow, setCurrentWindow] = useState(86400);
   const [orderbookData, setOrderbookData] = useState<OrderbookData | undefined>(undefined);
@@ -685,9 +690,10 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
   // Fetch markets
   useEffect(() => {
     fetchPredictMarkets()
-      .then(({ markets, spotIndexMap }) => {
+      .then(({ markets, spotIndexMap, szDecimalsMap }) => {
         setMarkets(markets);
         setSpotIndexMap(spotIndexMap);
+        setSzDecimalsMap(szDecimalsMap);
       })
       .catch(() => setMarkets([]));
   }, []);
@@ -1083,6 +1089,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
             <TradingPanel
               market={market}
               spotIndexMap={spotIndexMap}
+              szDecimalsMap={szDecimalsMap}
               walletAddress={wallet.address}
               walletProvider={wallet.provider}
               onConnectWallet={wallet.connect}
