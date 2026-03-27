@@ -102,6 +102,8 @@ function TradingPanel({
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
   const [limitPriceInput, setLimitPriceInput] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
+  const [sizeUnit, setSizeUnit] = useState<"shares" | "usdh">("shares");
+  const [showSizeDropdown, setShowSizeDropdown] = useState(false);
   const [tradeStatus, setTradeStatus] = useState<TradeStatus>("idle");
   const [tradeMsg, setTradeMsg] = useState("");
   const [tradeTxHash, setTradeTxHash] = useState<string | null>(null);
@@ -133,7 +135,8 @@ function TradingPanel({
 
   const spotIndex  = spotIndexMap[tradingCoinId] ?? -1;
   const szDecimals = szDecimalsMap[tradingCoinId] ?? 0;
-  const shares     = parseFloat(sharesInput) || 0;
+  const inputVal   = parseFloat(sharesInput) || 0;
+  const shares     = sizeUnit === "shares" ? inputVal : (tradingPrice > 0 ? inputVal / tradingPrice : 0);
   const limitPrice = parseFloat(limitPriceInput) || 0;
 
   // Cost and payout
@@ -362,7 +365,11 @@ function TradingPanel({
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {side === "sell" && tokenBalance !== null && tokenBalance > 0 && (
               <button
-                onClick={() => setSharesInput(String(Math.floor(tokenBalance)))}
+                onClick={() => setSharesInput(
+                  sizeUnit === "shares"
+                    ? String(Math.floor(tokenBalance))
+                    : (tokenBalance * tradingPrice).toFixed(2)
+                )}
                 style={{
                   fontSize: 11, padding: "2px 7px", borderRadius: 4,
                   border: "1px solid #e5e7eb", background: "#f9fafb",
@@ -380,17 +387,17 @@ function TradingPanel({
           </div>
         </div>
 
-        {/* Size input (shares) */}
-        <label style={{
+        {/* Size input with unit toggle (shares ↔ USDH) */}
+        <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
           border: "1px solid #e5e7eb", borderRadius: 8,
           padding: "12px 14px", marginBottom: 14,
-          background: "#f9fafb", cursor: "text", gap: 8,
+          background: "#f9fafb", gap: 8,
         }}>
           <span style={{ color: "#9ca3af", fontSize: 13, flexShrink: 0 }}>Size</span>
           <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1, justifyContent: "flex-end" }}>
             <input
-              type="number" min="0" step="1" placeholder="0"
+              type="number" min="0" step={sizeUnit === "shares" ? "1" : "0.01"} placeholder="0"
               value={sharesInput}
               onChange={(e) => setSharesInput(e.target.value)}
               style={{
@@ -399,11 +406,47 @@ function TradingPanel({
                 textAlign: "right", width: "80px", fontFamily: "inherit",
               }}
             />
-            <span style={{ color: "#6b7280", fontSize: 13, flexShrink: 0, whiteSpace: "nowrap" }}>
-              {tradingName} ▾
-            </span>
+            {/* Unit toggle dropdown */}
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              <button
+                onClick={() => setShowSizeDropdown((v) => !v)}
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: "#6b7280", fontSize: 13, fontFamily: "inherit",
+                  padding: "2px 4px", display: "flex", alignItems: "center", gap: 3,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {sizeUnit === "shares" ? tradingName : "USDH"}
+                <span style={{ fontSize: 10 }}>{showSizeDropdown ? "▲" : "▾"}</span>
+              </button>
+              {showSizeDropdown && (
+                <div style={{
+                  position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 60,
+                  background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8,
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.1)", minWidth: 90, overflow: "hidden",
+                }}>
+                  {(["shares", "usdh"] as const).map((unit) => (
+                    <button
+                      key={unit}
+                      onClick={() => { setSizeUnit(unit); setSharesInput(""); setShowSizeDropdown(false); }}
+                      style={{
+                        display: "block", width: "100%", textAlign: "left",
+                        padding: "10px 14px", background: sizeUnit === unit ? "#f0fdf4" : "#fff",
+                        border: "none", cursor: "pointer", fontSize: 13,
+                        fontWeight: sizeUnit === unit ? 700 : 400,
+                        color: sizeUnit === unit ? "#15803d" : "#374151",
+                        fontFamily: "inherit",
+                      }}
+                    >
+                      {unit === "shares" ? tradingName : "USDH"}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
-        </label>
+        </div>
 
         {/* Wide spread warning */}
         {showWideSpread && (

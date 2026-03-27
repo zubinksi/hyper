@@ -28,14 +28,32 @@ export default function PositionsFooter() {
     try {
       const { markets } = await fetchPredictMarkets();
 
-      // Build lookup by coinId ("#N") and also "@N" alias
+      // Build lookup: all possible coin identifier formats → outcome info.
+      // spotClearinghouseState may return coins as "#N" or "@N"; we add both.
+      // Multi-outcome markets only expose their YES coinId in options, so we
+      // also derive and register the NO coinId (#N+1 / @N+1).
       const lookup = new Map<string, { question: string; outcomeName: string; markPrice: number }>();
+
+      const addCoin = (coinId: string, info: { question: string; outcomeName: string; markPrice: number }) => {
+        lookup.set(coinId, info);
+        if (coinId.startsWith("#")) lookup.set("@" + coinId.slice(1), info);
+        if (coinId.startsWith("@")) lookup.set("#" + coinId.slice(1), info);
+      };
+
       for (const m of markets) {
         for (const opt of m.options) {
-          lookup.set(opt.coinId, { question: m.question, outcomeName: opt.name, markPrice: opt.price });
-          // "@N" alias in case spotClearinghouseState uses that format
-          if (opt.coinId.startsWith("#")) {
-            lookup.set("@" + opt.coinId.slice(1), { question: m.question, outcomeName: opt.name, markPrice: opt.price });
+          addCoin(opt.coinId, { question: m.question, outcomeName: opt.name, markPrice: opt.price });
+
+          // For multi-outcome markets the NO side (#N+1) is not in options — add it explicitly.
+          if (!m.isBinary) {
+            const yesNum = parseInt(opt.coinId.slice(1));
+            if (!isNaN(yesNum)) {
+              addCoin(`#${yesNum + 1}`, {
+                question: m.question,
+                outcomeName: `No — ${opt.name}`,
+                markPrice: opt.price > 0 ? 1 - opt.price : 0,
+              });
+            }
           }
         }
       }
@@ -50,11 +68,13 @@ export default function PositionsFooter() {
         const size = parseFloat(b.total);
         if (!(size > 0)) continue;
 
-        const info = lookup.get(b.coin);
+        // Normalize coin: strip any "/USDH" or other pair suffix
+        const coinKey = b.coin.includes("/") ? b.coin.split("/")[0] : b.coin;
+        const info = lookup.get(coinKey);
         if (!info) continue;
 
         // Normalise to canonical "#N" coinId
-        const coinId = b.coin.startsWith("@") ? "#" + b.coin.slice(1) : b.coin;
+        const coinId = coinKey.startsWith("@") ? "#" + coinKey.slice(1) : coinKey;
 
         const entryPrice = b.entryNtl ? parseFloat(b.entryNtl) / size : null;
         const positionValue = size * info.markPrice;
