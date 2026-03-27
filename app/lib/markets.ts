@@ -246,6 +246,18 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   // (Hyperliquid keeps old + new versions simultaneously; we only want the soonest expiry)
   const recurringByUnderlying = new Map<string, { expiryMs: number; market: Market }>();
 
+  // Log all binary outcome IDs to understand the encoding scheme
+  console.log("[markets] Binary outcomes (first 10):", meta.outcomes.slice(0, 10).map((e) => ({
+    outcome: e.outcome,
+    name: e.name,
+    enc0: 10 * e.outcome,
+    enc1: 10 * e.outcome + 1,
+    inPriceMap0: priceMap.has(`#${10 * e.outcome}`),
+    inSpotIdx0:  spotIndexMap[`#${10 * e.outcome}`] !== undefined,
+    inPriceMapDirect: priceMap.has(`#${e.outcome}`),
+    inSpotIdxDirect:  spotIndexMap[`#${e.outcome}`] !== undefined,
+  })));
+
   for (const entry of meta.outcomes) {
     if (claimedIds.has(entry.outcome)) continue;
 
