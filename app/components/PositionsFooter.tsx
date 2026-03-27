@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useWallet } from "../lib/wallet-context";
 import { fetchPredictMarkets, postInfo } from "../lib/markets";
-import { fetchOutcomeBalances } from "../lib/evm";
 
 interface PositionRow {
   coinId: string;
@@ -29,45 +28,35 @@ export default function PositionsFooter() {
     try {
       const { markets } = await fetchPredictMarkets();
 
-      // All outcome coinIds across every market
-      const allCoinIds = markets.flatMap((m) => m.options.map((o) => o.coinId));
-
-      // ERC-1155 batch balances (primary source for position sizes)
-      const balances = await fetchOutcomeBalances(addr, allCoinIds);
-
-      // spotClearinghouseState for entry prices / PNL (best-effort supplement)
-      const entryPriceMap: Record<string, number> = {};
-      try {
-        const data = await postInfo<{
-          balances: { coin: string; total: string; entryNtl?: string }[];
-        }>({ type: "spotClearinghouseState", user: addr });
-        for (const b of data.balances ?? []) {
-          const size = parseFloat(b.total);
-          if (size > 0 && b.entryNtl) {
-            entryPriceMap[b.coin] = parseFloat(b.entryNtl) / size;
-          }
-        }
-      } catch { /* entry prices unavailable — show "—" */ }
-
-      // Market info lookup
+      // Build lookup by coinId ("#N") and also "@N" alias
       const lookup = new Map<string, { question: string; outcomeName: string; markPrice: number }>();
       for (const m of markets) {
         for (const opt of m.options) {
-          lookup.set(opt.coinId, {
-            question: m.question,
-            outcomeName: opt.name,
-            markPrice: opt.price,
-          });
+          lookup.set(opt.coinId, { question: m.question, outcomeName: opt.name, markPrice: opt.price });
+          // "@N" alias in case spotClearinghouseState uses that format
+          if (opt.coinId.startsWith("#")) {
+            lookup.set("@" + opt.coinId.slice(1), { question: m.question, outcomeName: opt.name, markPrice: opt.price });
+          }
         }
       }
 
+      // Spot balances — outcome tokens are L1 spot assets on HyperCore
+      const data = await postInfo<{
+        balances: { coin: string; total: string; entryNtl?: string }[];
+      }>({ type: "spotClearinghouseState", user: addr });
+
       const rows: PositionRow[] = [];
-      for (const [coinId, size] of Object.entries(balances)) {
+      for (const b of data.balances ?? []) {
+        const size = parseFloat(b.total);
         if (!(size > 0)) continue;
-        const info = lookup.get(coinId);
+
+        const info = lookup.get(b.coin);
         if (!info) continue;
 
-        const entryPrice = entryPriceMap[coinId] ?? null;
+        // Normalise to canonical "#N" coinId
+        const coinId = b.coin.startsWith("@") ? "#" + b.coin.slice(1) : b.coin;
+
+        const entryPrice = b.entryNtl ? parseFloat(b.entryNtl) / size : null;
         const positionValue = size * info.markPrice;
         const entryNtl = entryPrice !== null ? entryPrice * size : null;
         const pnl = entryNtl !== null ? positionValue - entryNtl : null;
@@ -76,17 +65,7 @@ export default function PositionsFooter() {
             ? (pnl / entryNtl) * 100
             : null;
 
-        rows.push({
-          coinId,
-          question: info.question,
-          outcomeName: info.outcomeName,
-          size,
-          markPrice: info.markPrice,
-          entryPrice,
-          positionValue,
-          pnl,
-          roe,
-        });
+        rows.push({ coinId, question: info.question, outcomeName: info.outcomeName, size, markPrice: info.markPrice, entryPrice, positionValue, pnl, roe });
       }
       setPositions(rows);
     } catch {
