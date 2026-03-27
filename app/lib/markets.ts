@@ -246,15 +246,14 @@ export async function fetchPredictMarkets(): Promise<MarketsResult> {
   // (Hyperliquid keeps old + new versions simultaneously; we only want the soonest expiry)
   const recurringByUnderlying = new Map<string, { expiryMs: number; market: Market }>();
 
-  // Log the raw recurring outcome objects — captures any extra API fields our type misses
-  const recurringOutcomes = meta.outcomes.filter((e) => e.name === "Recurring");
-  console.log("[markets] Raw recurring outcomes:", JSON.stringify(recurringOutcomes, null, 2));
-  // Log the last 20 universe @-entries (the ones with undefined base tokens)
-  const lastAtEntries = spotMeta.universe
-    .map((u, i) => ({ name: u.name, baseToken: spotMeta.tokens?.[u.tokens?.[0]]?.name, i, tokens: u.tokens }))
-    .filter((x) => x.name.startsWith("@"))
-    .slice(-20);
-  console.log("[markets] Last 20 @-prefixed universe entries:", lastAtEntries);
+  // Targeted: check exact state for recurring outcome token #23400
+  console.log("[markets] Universe total length:", spotMeta.universe.length);
+  const entry23400 = spotMeta.universe.find((u) => u.name.includes("23400"));
+  console.log("[markets] Any universe entry containing '23400':", entry23400);
+  const hashPrefixedSample = spotMeta.universe.filter((u) => u.name.startsWith("#")).slice(0, 5);
+  console.log("[markets] First 5 #-prefixed universe entries:", hashPrefixedSample.map((u) => u.name));
+  console.log("[markets] spotIndexMap['#23400']:", spotIndexMap["#23400"]);
+  console.log("[markets] priceMap.has('#23400'):", priceMap.has("#23400"), "markPx:", priceMap.get("#23400")?.markPx);
 
   for (const entry of meta.outcomes) {
     if (claimedIds.has(entry.outcome)) continue;
