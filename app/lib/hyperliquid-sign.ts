@@ -77,6 +77,8 @@ const AGENT_TYPES = {
 export interface OrderParams {
   /** Raw EIP-1193 provider (window.ethereum or WalletConnect EthereumProvider) */
   walletProvider: object;
+  /** The already-connected wallet address — avoids eth_requestAccounts round-trip */
+  signerAddress: string;
   /** Index in spotMeta.universe for the token being traded */
   spotIndex: number;
   isBuy: boolean;
@@ -147,6 +149,7 @@ export async function estimateSlippage(
 
 export async function signAndSubmitOrder({
   walletProvider,
+  signerAddress,
   spotIndex,
   isBuy,
   price,
@@ -160,11 +163,13 @@ export async function signAndSubmitOrder({
   }
 
   try {
-    const { BrowserProvider } = await import("ethers");
+    const { BrowserProvider, JsonRpcSigner } = await import("ethers");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ethersProvider = new BrowserProvider(walletProvider as any);
-    const signer = await ethersProvider.getSigner();
-    const signerAddress = await signer.getAddress();
+    // Construct signer directly — avoids the eth_requestAccounts round-trip
+    // that BrowserProvider.getSigner() triggers in ethers v6.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const signer = new JsonRpcSigner(ethersProvider as any, signerAddress);
 
     const assetId = SPOT_ASSET_BASE + spotIndex;
 

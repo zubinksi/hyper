@@ -175,6 +175,7 @@ function TradingPanel({
 
     const result = await signAndSubmitOrder({
       walletProvider,
+      signerAddress: walletAddress,
       spotIndex,
       isBuy: side === "buy",
       price: tradingPrice,
