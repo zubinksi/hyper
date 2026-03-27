@@ -98,12 +98,13 @@ function TradingPanel({
   const [quantity, setQuantity] = useState("");
   const [tradeStatus, setTradeStatus] = useState<TradeStatus>("idle");
   const [tradeMsg, setTradeMsg] = useState("");
+  const [tradeTxHash, setTradeTxHash] = useState<string | null>(null);
   const [slippage, setSlippage] = useState<number | null>(null);
   const [usdhBalance, setUsdhBalance] = useState<number | null>(null);
   const [tokenBalance, setTokenBalance] = useState<number | null>(null);
 
   // Reset status when inputs change
-  useEffect(() => { setTradeStatus("idle"); setTradeMsg(""); }, [side, selectedOutcomeIdx, selectedSide, quantity]);
+  useEffect(() => { setTradeStatus("idle"); setTradeMsg(""); setTradeTxHash(null); }, [side, selectedOutcomeIdx, selectedSide, quantity]);
 
   // Which token we're trading
   const selectedOutcomeOpt = market.options[selectedOutcomeIdx] ?? market.options[0];
@@ -182,6 +183,10 @@ function TradingPanel({
 
     setTradeStatus(result.success ? "success" : "error");
     setTradeMsg(result.message);
+    if (result.txHash) setTradeTxHash(result.txHash);
+    if (result.success && walletAddress) {
+      fetchUsdhBalance(walletAddress).then(setUsdhBalance);
+    }
   }
 
   // Shared pill button style
@@ -413,6 +418,16 @@ function TradingPanel({
             }}
           >
             {tradeMsg}
+            {tradeTxHash && (
+              <a
+                href={`https://app.hyperliquid-testnet.xyz/explorer/tx/${tradeTxHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ display: "block", marginTop: 4, color: "#2563eb", textDecoration: "underline" }}
+              >
+                View on Explorer ↗
+              </a>
+            )}
           </div>
         )}
 

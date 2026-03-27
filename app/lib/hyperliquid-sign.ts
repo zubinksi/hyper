@@ -89,6 +89,7 @@ export interface OrderParams {
 export interface OrderResult {
   success: boolean;
   message: string;
+  txHash?: string;
   data?: unknown;
 }
 
@@ -158,86 +159,145 @@ export async function signAndSubmitOrder({
     return { success: false, message: "Size must be greater than zero" };
   }
 
-  const assetId = SPOT_ASSET_BASE + spotIndex;
-  const nonce = Date.now();
-
-  // 5 % slippage for IOC market orders
-  const SLIPPAGE = 0.05;
-  const limitPx = isBuy
-    ? price * (1 + SLIPPAGE)
-    : price * (1 - SLIPPAGE);
-
-  // Keys must match Python SDK insertion order for identical msgpack bytes
-  const orderWire = {
-    a: assetId,
-    b: isBuy,
-    p: floatToWire(limitPx),
-    s: floatToWire(size),
-    r: false,
-    t: { limit: { tif: "Ioc" } },
-  };
-
-  const action = {
-    type: "order",
-    orders: [orderWire],
-    grouping: "na",
-  };
-
-  const hashBytes = computeActionHash(action, null, nonce);
-  const connectionId = zeroPadValue(hexlify(hashBytes), 32);
-
-  // "b" = testnet source identifier
-  const phantomAgent = { source: "b", connectionId };
-
   try {
     const { BrowserProvider } = await import("ethers");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const ethersProvider = new BrowserProvider(walletProvider as any);
     const signer = await ethersProvider.getSigner();
+    const signerAddress = await signer.getAddress();
 
-    const sigHex: string = await signer.signTypedData(
-      AGENT_DOMAIN,
-      AGENT_TYPES,
-      phantomAgent
-    );
+    const assetId = SPOT_ASSET_BASE + spotIndex;
 
-    // ethers returns 65-byte signature as 0x + r(32) + s(32) + v(1)
-    const r = sigHex.slice(0, 66);           // 0x + 64 hex chars
-    const s = "0x" + sigHex.slice(66, 130);  // 64 hex chars
-    const v = parseInt(sigHex.slice(130, 132), 16);
+    // 10% slippage ceiling for IOC — wide enough to sweep through spreads.
+    // Outcome tokens are 0–1 USDH: cap buys at 0.9999, floor sells at 0.0001.
+    const SLIPPAGE = 0.10;
+    const limitPx = isBuy
+      ? Math.min(price * (1 + SLIPPAGE), 0.9999)
+      : Math.max(price * (1 - SLIPPAGE), 0.0001);
 
-    const payload = {
-      action,
-      nonce,
-      signature: { r, s, v },
-      vaultAddress: null,
-    };
+    const MAX_RETRIES = 3;
+    let remaining = size;
+    let totalFilledSz = 0;
+    let weightedPxSum = 0;
+    let txHash: string | undefined;
+    let lastError: string | undefined;
 
-    const res = await fetch(HL_TESTNET_EXCHANGE, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    for (let attempt = 0; attempt < MAX_RETRIES && remaining > 0.000001; attempt++) {
+      const nonce = Date.now();
 
-    const json = await res.json();
+      // Keys must match Python SDK insertion order for identical msgpack bytes
+      const orderWire = {
+        a: assetId,
+        b: isBuy,
+        p: floatToWire(limitPx),
+        s: floatToWire(remaining),
+        r: false,
+        t: { limit: { tif: "Ioc" } },
+      };
 
-    if (json.status === "ok") {
+      const action = {
+        type: "order",
+        orders: [orderWire],
+        grouping: "na",
+      };
+
+      const hashBytes = computeActionHash(action, null, nonce);
+      const connectionId = zeroPadValue(hexlify(hashBytes), 32);
+
+      // "b" = testnet source identifier
+      const phantomAgent = { source: "b", connectionId };
+
+      const sigHex: string = await signer.signTypedData(
+        AGENT_DOMAIN,
+        AGENT_TYPES,
+        phantomAgent
+      );
+
+      // ethers returns 65-byte signature as 0x + r(32) + s(32) + v(1)
+      const r = sigHex.slice(0, 66);
+      const s = "0x" + sigHex.slice(66, 130);
+      const v = parseInt(sigHex.slice(130, 132), 16);
+
+      const payload = {
+        action,
+        nonce,
+        signature: { r, s, v },
+        vaultAddress: null,
+      };
+
+      const res = await fetch(HL_TESTNET_EXCHANGE, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const json = await res.json();
+
+      if (json.status !== "ok") {
+        const errMsg =
+          typeof json.response === "string" ? json.response : JSON.stringify(json.response);
+        return { success: false, message: errMsg, data: json };
+      }
+
       const statuses: unknown[] = json.response?.data?.statuses ?? [];
       const first = statuses[0] as Record<string, unknown> | undefined;
       const filled = first?.filled as Record<string, unknown> | undefined;
-      if (filled) {
-        return {
-          success: true,
-          message: `Filled ${filled.totalSz} @ avg ${filled.avgPx}`,
-          data: json,
-        };
+      const statusError = typeof first?.error === "string" ? first.error : undefined;
+
+      if (statusError) {
+        lastError = statusError;
+        break;
       }
-      return { success: true, message: "Order placed", data: json };
+
+      if (filled) {
+        // filled.totalSz is in shares (tokens), not dollars
+        const filledSz = parseFloat(filled.totalSz as string);
+        const fillAvgPx = parseFloat(filled.avgPx as string);
+        if (filledSz > 0) {
+          totalFilledSz += filledSz;
+          weightedPxSum += filledSz * fillAvgPx;
+          remaining -= filledSz;
+
+          // Fetch tx hash from the exchange on first fill
+          if (!txHash) {
+            try {
+              const fillsRes = await fetch(HL_TESTNET_INFO, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  type: "userFillsByTime",
+                  user: signerAddress,
+                  startTime: nonce - 5000,
+                  endTime: nonce + 30000,
+                }),
+              });
+              const fills = await fillsRes.json() as Array<{ hash?: string; oid?: number }>;
+              const oid = filled.oid as number | undefined;
+              const match = oid !== undefined ? fills.find((f) => f.oid === oid) : fills[0];
+              txHash = match?.hash;
+            } catch { /* ignore */ }
+          }
+        } else {
+          break; // zero fill, stop retrying
+        }
+      } else {
+        // IOC not matched — no liquidity at this price
+        lastError = lastError ?? "Order was not filled (insufficient liquidity at this price)";
+        break;
+      }
     }
 
-    const errMsg =
-      typeof json.response === "string" ? json.response : JSON.stringify(json.response);
-    return { success: false, message: errMsg, data: json };
+    if (totalFilledSz > 0) {
+      const overallAvg = weightedPxSum / totalFilledSz;
+      return {
+        success: true,
+        message: `Filled ${totalFilledSz.toFixed(4)} @ avg ${overallAvg.toFixed(6)} USDH`,
+        txHash,
+        data: { totalFilledSz, overallAvg },
+      };
+    }
+
+    return { success: false, message: lastError ?? "Order was not filled" };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     return { success: false, message };
