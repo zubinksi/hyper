@@ -98,9 +98,10 @@ function TradingPanel({
   selectedSide: "yes" | "no";
   setSelectedSide: (s: "yes" | "no") => void;
 }) {
-  const [usdAmount, setUsdAmount] = useState("");
+  const [sharesInput, setSharesInput] = useState("");
   const [orderType, setOrderType] = useState<"market" | "limit">("market");
   const [limitPriceInput, setLimitPriceInput] = useState("");
+  const [showDropdown, setShowDropdown] = useState(false);
   const [tradeStatus, setTradeStatus] = useState<TradeStatus>("idle");
   const [tradeMsg, setTradeMsg] = useState("");
   const [tradeTxHash, setTradeTxHash] = useState<string | null>(null);
@@ -111,7 +112,7 @@ function TradingPanel({
   // Reset status when inputs change
   useEffect(() => {
     setTradeStatus("idle"); setTradeMsg(""); setTradeTxHash(null);
-  }, [side, selectedOutcomeIdx, selectedSide, usdAmount, orderType, limitPriceInput]);
+  }, [side, selectedOutcomeIdx, selectedSide, sharesInput, orderType, limitPriceInput]);
 
   // Which token we're trading
   const selectedOutcomeOpt = market.options[selectedOutcomeIdx] ?? market.options[0];
@@ -132,20 +133,14 @@ function TradingPanel({
 
   const spotIndex  = spotIndexMap[tradingCoinId] ?? -1;
   const szDecimals = szDecimalsMap[tradingCoinId] ?? 0;
-  const usd        = parseFloat(usdAmount) || 0;
+  const shares     = parseFloat(sharesInput) || 0;
   const limitPrice = parseFloat(limitPriceInput) || 0;
 
-  // Derive shares and payout from book analysis (market) or limit price (limit)
-  const shares = orderType === "limit" && limitPrice > 0
-    ? usd / limitPrice
-    : (bookAnalysis?.estimatedShares ?? (tradingPrice > 0 ? usd / tradingPrice : 0));
-  const payout = shares; // 1 USDH per share at resolution
-  const profit = payout - usd;
-  const avgPricePct = orderType === "limit" && limitPrice > 0
-    ? limitPrice * 100
-    : (bookAnalysis?.avgPrice !== null && bookAnalysis?.avgPrice !== undefined
-        ? bookAnalysis.avgPrice * 100
-        : tradingPrice * 100);
+  // Cost and payout
+  const execPrice  = orderType === "limit" && limitPrice > 0 ? limitPrice : tradingPrice;
+  const orderValue = shares * execPrice;           // USDH spent
+  const payout     = shares;                       // 1 USDH per share at resolution
+  const profit     = payout - orderValue;
 
   // Fetch USDH balance
   useEffect(() => {
@@ -160,20 +155,21 @@ function TradingPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [walletAddress, tradingCoinId]);
 
-  // Debounced book analysis
+  // Debounced book analysis (pass estimated USD cost to walk the book)
   useEffect(() => {
-    if (usd <= 0 || orderType === "limit") { setBookAnalysis(null); return; }
+    if (shares <= 0 || orderType === "limit") { setBookAnalysis(null); return; }
+    const usdEstimate = shares * tradingPrice;
     const t = setTimeout(() => {
-      analyzeOrderBook(tradingCoinId, side === "buy", usd).then(setBookAnalysis);
+      analyzeOrderBook(tradingCoinId, side === "buy", usdEstimate).then(setBookAnalysis);
     }, 400);
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usd, side, tradingCoinId, orderType]);
+  }, [shares, side, tradingCoinId, orderType, tradingPrice]);
 
   async function handleTrade() {
     if (!walletAddress || !walletProvider) { onConnectWallet(); return; }
-    if (usd <= 0) {
-      setTradeStatus("error"); setTradeMsg("Enter an amount first"); return;
+    if (shares <= 0) {
+      setTradeStatus("error"); setTradeMsg("Enter a quantity first"); return;
     }
     if (orderType === "limit" && limitPrice <= 0) {
       setTradeStatus("error"); setTradeMsg("Enter a limit price"); return;
@@ -212,28 +208,19 @@ function TradingPanel({
 
   const buyColor  = "#16a34a";
   const sellColor = "#dc2626";
-  const activeTabColor = side === "buy" ? buyColor : sellColor;
-  const pillBtn = (active: boolean, color: string): React.CSSProperties => ({
-    flex: 1, padding: "10px 8px", borderRadius: 8,
-    border: `1px solid ${active ? color : "#e5e7eb"}`,
-    background: active ? color : "#f3f4f6",
-    color: active ? "#fff" : "#6b7280",
-    fontWeight: 700, cursor: "pointer", fontSize: 13,
+  const activeColor = side === "buy" ? buyColor : sellColor;
+
+  // Green-border pill style (from reference image)
+  const pillBtn = (active: boolean): React.CSSProperties => ({
+    flex: 1, padding: "9px 8px", borderRadius: 10,
+    border: active ? `1.5px solid ${buyColor}` : "1px solid #e5e7eb",
+    background: active ? "#f0fdf4" : "#fff",
+    color: active ? "#15803d" : "#374151",
+    fontWeight: 600, cursor: "pointer", fontSize: 13,
     whiteSpace: "nowrap" as const, fontFamily: "inherit",
   });
-  const toggleBtn = (active: boolean): React.CSSProperties => ({
-    flex: 1, padding: "8px", borderRadius: 6,
-    border: "none",
-    background: active ? "#fff" : "transparent",
-    boxShadow: active ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
-    color: active ? "#111" : "#9ca3af",
-    fontWeight: active ? 700 : 500, cursor: "pointer",
-    fontSize: 13, fontFamily: "inherit", transition: "all 0.1s",
-  });
 
-  const showWideSpreread = bookAnalysis?.spreadPct !== null &&
-    bookAnalysis?.spreadPct !== undefined &&
-    bookAnalysis.spreadPct > 20;
+  const showWideSpread = (bookAnalysis?.spreadPct ?? 0) > 20;
   const showPartialFill = orderType === "market" && bookAnalysis?.isPartialFill === true;
 
   const statusColors: Record<TradeStatus, string> = {
@@ -243,19 +230,59 @@ function TradingPanel({
   return (
     <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden", background: "#fff" }}>
 
-      {/* Buy / Sell tabs */}
-      <div style={{ display: "flex", borderBottom: "1px solid #f3f4f6" }}>
+      {/* Buy / Sell tabs + Market/Limit dropdown on right */}
+      <div style={{ display: "flex", alignItems: "stretch", borderBottom: "1px solid #f3f4f6", position: "relative" }}>
         {(["buy", "sell"] as const).map((s) => (
           <button key={s} onClick={() => setSide(s)} style={{
-            flex: 1, background: "none", border: "none",
+            background: "none", border: "none",
             borderBottom: side === s ? `2px solid ${s === "buy" ? buyColor : sellColor}` : "2px solid transparent",
-            color: side === s ? (s === "buy" ? buyColor : sellColor) : "#6b7280",
+            color: side === s ? (s === "buy" ? buyColor : sellColor) : "#9ca3af",
             fontSize: 14, fontWeight: 700, cursor: "pointer",
-            padding: "14px 0", fontFamily: "inherit", textTransform: "capitalize",
+            padding: "13px 18px", fontFamily: "inherit",
           }}>
             {s.charAt(0).toUpperCase() + s.slice(1)}
           </button>
         ))}
+
+        {/* Spacer */}
+        <div style={{ flex: 1 }} />
+
+        {/* Market/Limit dropdown trigger */}
+        <div style={{ position: "relative", display: "flex", alignItems: "center", paddingRight: 12 }}>
+          <button
+            onClick={() => setShowDropdown((v) => !v)}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              fontSize: 13, fontWeight: 600, color: "#374151",
+              fontFamily: "inherit", padding: "4px 8px",
+              display: "flex", alignItems: "center", gap: 4,
+            }}
+          >
+            {orderType === "market" ? "Market" : "Limit"}
+            <span style={{ fontSize: 10 }}>{showDropdown ? "▲" : "▼"}</span>
+          </button>
+
+          {showDropdown && (
+            <div style={{
+              position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 50,
+              background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.1)", minWidth: 110, overflow: "hidden",
+            }}>
+              {(["market", "limit"] as const).map((t) => (
+                <button key={t} onClick={() => { setOrderType(t); setShowDropdown(false); }} style={{
+                  display: "block", width: "100%", textAlign: "left",
+                  padding: "10px 14px", background: orderType === t ? "#f0fdf4" : "#fff",
+                  border: "none", cursor: "pointer", fontSize: 13,
+                  fontWeight: orderType === t ? 700 : 400,
+                  color: orderType === t ? "#15803d" : "#374151",
+                  fontFamily: "inherit",
+                }}>
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ padding: "16px" }}>
@@ -265,7 +292,7 @@ function TradingPanel({
           <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
             {market.options.map((opt, i) => (
               <button key={opt.coinId} onClick={() => setSelectedOutcomeIdx(i)}
-                style={pillBtn(selectedOutcomeIdx === i, activeTabColor)}>
+                style={pillBtn(selectedOutcomeIdx === i)}>
                 {opt.name}
               </button>
             ))}
@@ -273,32 +300,28 @@ function TradingPanel({
         )}
 
         {/* Yes / No */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-          <button onClick={() => setSelectedSide("yes")} style={pillBtn(selectedSide === "yes", buyColor)}>
-            {market.isBinary ? market.options[0].name : "Yes"}{" "}
-            {(tradingPrice * 100).toFixed(0)}%
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <button onClick={() => setSelectedSide("yes")} style={pillBtn(selectedSide === "yes")}>
+            {side === "buy" ? "Buy" : "Sell"} {market.isBinary ? market.options[0].name : "Yes"}
           </button>
-          <button onClick={() => setSelectedSide("no")} style={pillBtn(selectedSide === "no", sellColor)}>
-            {market.isBinary ? market.options[1].name : "No"}{" "}
-            {((1 - (market.isBinary ? market.options[0].price : selectedOutcomeOpt.price)) * 100).toFixed(0)}%
+          <button onClick={() => setSelectedSide("no")} style={{
+            ...pillBtn(selectedSide === "no"),
+            ...(selectedSide === "no" ? {
+              border: `1.5px solid ${sellColor}`,
+              background: "#fef2f2",
+              color: "#b91c1c",
+            } : {}),
+          }}>
+            {side === "buy" ? "Buy" : "Sell"} {market.isBinary ? market.options[1].name : "No"}
           </button>
-        </div>
-
-        {/* Market / Limit toggle */}
-        <div style={{
-          display: "flex", background: "#f3f4f6", borderRadius: 8,
-          padding: 3, marginBottom: 14, gap: 2,
-        }}>
-          <button onClick={() => setOrderType("market")} style={toggleBtn(orderType === "market")}>Market</button>
-          <button onClick={() => setOrderType("limit")}  style={toggleBtn(orderType === "limit")}>Limit</button>
         </div>
 
         {/* Limit price input (only for limit orders) */}
         {orderType === "limit" && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", marginBottom: 4 }}>
-              LIMIT PRICE (USDH / SHARE)
-            </div>
+            <label style={{ display: "block", fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>
+              Limit price (USDH / share)
+            </label>
             <input
               type="number" min="0.001" max="0.999" step="0.001"
               placeholder={tradingPrice.toFixed(3)}
@@ -306,97 +329,95 @@ function TradingPanel({
               onChange={(e) => setLimitPriceInput(e.target.value)}
               style={{
                 width: "100%", boxSizing: "border-box",
-                border: "1.5px solid #e5e7eb", borderRadius: 8,
+                border: "1px solid #e5e7eb", borderRadius: 8,
                 padding: "10px 12px", fontSize: 14, fontFamily: "inherit",
-                color: "#111", background: "#fff", outline: "none",
+                color: "#111", background: "#f9fafb", outline: "none",
               }}
             />
           </div>
         )}
 
-        {/* Amount / Shares two-column inputs */}
-        <div style={{ display: "flex", gap: 10, marginBottom: 4 }}>
-          {/* Amount (USDH) */}
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", marginBottom: 4 }}>
-              AMOUNT (USDH)
-            </div>
-            <div style={{
-              border: "1.5px solid #06b6d4", borderRadius: 8, padding: "10px 12px",
-              background: "#fff", display: "flex", alignItems: "center",
-            }}>
-              <input
-                type="number" min="0" step="any" placeholder="0"
-                value={usdAmount}
-                onChange={(e) => setUsdAmount(e.target.value)}
+        {/* Available to Trade */}
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          marginBottom: 10, fontSize: 12,
+        }}>
+          <span style={{ color: "#9ca3af" }}>Available to Trade</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {side === "sell" && tokenBalance !== null && tokenBalance > 0 && (
+              <button
+                onClick={() => setSharesInput(String(Math.floor(tokenBalance)))}
                 style={{
-                  flex: 1, border: "none", outline: "none", background: "transparent",
-                  fontSize: 15, fontWeight: 500, color: "#111", fontFamily: "inherit",
-                  minWidth: 0,
+                  fontSize: 11, padding: "2px 7px", borderRadius: 4,
+                  border: "1px solid #e5e7eb", background: "#f9fafb",
+                  color: "#374151", cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
                 }}
-              />
-            </div>
-          </div>
-          {/* Shares (computed) */}
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", letterSpacing: "0.05em", marginBottom: 4 }}>
-              SHARES
-            </div>
-            <div style={{
-              border: "1px solid #e5e7eb", borderRadius: 8, padding: "10px 12px",
-              background: "#f9fafb", display: "flex", alignItems: "center",
-            }}>
-              <span style={{ fontSize: 15, fontWeight: 500, color: shares > 0 ? "#111" : "#9ca3af" }}>
-                {shares > 0 ? shares.toFixed(2) : "0"}
-              </span>
-            </div>
+              >
+                Max
+              </button>
+            )}
+            <span style={{ color: "#111", fontWeight: 500 }}>
+              {side === "buy"
+                ? usdhBalance !== null ? `${usdhBalance.toFixed(2)} USDH` : walletAddress ? "— USDH" : "0 USDH"
+                : tokenBalance !== null ? `${tokenBalance.toFixed(4).replace(/\.?0+$/, "")} ${tradingName}` : walletAddress ? `— ${tradingName}` : `0 ${tradingName}`}
+            </span>
           </div>
         </div>
 
-        {/* Available balance */}
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#9ca3af", marginBottom: 10 }}>
-          <span>
-            {side === "buy"
-              ? (usdhBalance !== null ? `${usdhBalance.toFixed(2)} USDH available` : walletAddress ? "Loading…" : "")
-              : (tokenBalance !== null && tokenBalance > 0
-                  ? <>{tokenBalance.toFixed(4)} {tradingName} available — <button
-                      onClick={() => setUsdAmount((tokenBalance * tradingPrice).toFixed(2))}
-                      style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontSize: 11, padding: 0, fontFamily: "inherit" }}>
-                      Max
-                    </button></>
-                  : walletAddress ? "0 shares available" : "")}
-          </span>
-        </div>
+        {/* Size input (shares) */}
+        <label style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          border: "1px solid #e5e7eb", borderRadius: 8,
+          padding: "12px 14px", marginBottom: 14,
+          background: "#f9fafb", cursor: "text", gap: 8,
+        }}>
+          <span style={{ color: "#9ca3af", fontSize: 13, flexShrink: 0 }}>Size</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flex: 1, justifyContent: "flex-end" }}>
+            <input
+              type="number" min="0" step="1" placeholder="0"
+              value={sharesInput}
+              onChange={(e) => setSharesInput(e.target.value)}
+              style={{
+                background: "transparent", border: "none", outline: "none",
+                color: "#111", fontSize: 15, fontWeight: 500,
+                textAlign: "right", width: "80px", fontFamily: "inherit",
+              }}
+            />
+            <span style={{ color: "#6b7280", fontSize: 13, flexShrink: 0, whiteSpace: "nowrap" }}>
+              {tradingName} ▾
+            </span>
+          </div>
+        </label>
 
         {/* Wide spread warning */}
-        {showWideSpreread && (
+        {showWideSpread && (
           <div style={{
-            marginBottom: 10, padding: "10px 12px", borderRadius: 8,
+            marginBottom: 12, padding: "10px 12px", borderRadius: 8,
             background: "#fffbeb", border: "1px solid #f59e0b",
             fontSize: 12, color: "#92400e", lineHeight: 1.5,
           }}>
             Wide spread ({bookAnalysis!.spreadPct!.toFixed(0)}%) — thin book.
             Consider a{" "}
-            <button onClick={() => setOrderType("limit")} style={{
+            <button onClick={() => { setOrderType("limit"); setShowDropdown(false); }} style={{
               background: "none", border: "none", padding: 0, cursor: "pointer",
-              color: "#92400e", fontWeight: 700, textDecoration: "underline", fontSize: 12,
-              fontFamily: "inherit",
+              color: "#92400e", fontWeight: 700, textDecoration: "underline",
+              fontSize: 12, fontFamily: "inherit",
             }}>
               limit order
             </button>
-            {" "}or increasing your amount for better fills.
+            {" "}or increasing your size for better fills.
           </div>
         )}
 
         {/* Partial fill alert */}
         {showPartialFill && (
           <div style={{
-            marginBottom: 10, padding: "10px 12px", borderRadius: 8,
+            marginBottom: 12, padding: "10px 12px", borderRadius: 8,
             background: "#eff6ff", border: "1px solid #93c5fd",
             fontSize: 12, color: "#1e40af", lineHeight: 1.5,
           }}>
             Only ${bookAnalysis!.availableLiquidityUsd.toFixed(2)} of liquidity available —
-            order will partially fill for {shares.toFixed(2)} shares.
+            order may partially fill.
           </div>
         )}
 
@@ -410,21 +431,23 @@ function TradingPanel({
               : tradeStatus === "success" ? "#16a34a"
               : tradeStatus === "error"   ? "#dc2626"
               : !walletAddress            ? "#374151"
-              : activeTabColor,
+              : activeColor,
             color: tradeStatus === "pending" ? "#6b7280" : "#fff",
-            fontSize: 15, fontWeight: 700, cursor: tradeStatus === "pending" ? "default" : "pointer",
-            fontFamily: "inherit", marginBottom: 8, transition: "background 0.15s",
+            fontSize: 15, fontWeight: 700,
+            cursor: tradeStatus === "pending" ? "default" : "pointer",
+            fontFamily: "inherit", marginBottom: tradeMsg ? 8 : 0,
+            transition: "background 0.15s",
           }}
         >
           {tradeStatus === "pending" ? "Submitting…"
-           : tradeStatus === "success" ? "Order placed ✓"
+           : tradeStatus === "success" ? "Order filled ✓"
            : !walletAddress ? "Connect Wallet"
            : `${side === "buy" ? "Buy" : "Sell"} ${tradingName}`}
         </button>
 
         {/* Status message */}
         {tradeMsg && (
-          <div style={{ fontSize: 12, color: statusColors[tradeStatus], textAlign: "center", marginBottom: 8 }}>
+          <div style={{ fontSize: 12, color: statusColors[tradeStatus], textAlign: "center", padding: "4px 0 8px" }}>
             {tradeMsg}
             {tradeTxHash && (
               <a href={`https://app.hyperliquid-testnet.xyz/explorer/tx/${tradeTxHash}`}
@@ -437,28 +460,25 @@ function TradingPanel({
         )}
 
         {/* Order details */}
-        {usd > 0 && (
-          <div style={{ borderTop: "1px solid #f3f4f6", paddingTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        {shares > 0 && (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #f3f4f6", display: "flex", flexDirection: "column", gap: 9 }}>
             {[
-              { label: "Avg price", value: `${avgPricePct.toFixed(0)}%`, color: "#111" },
-              { label: "Shares",    value: shares > 0 ? shares.toFixed(2) : "—", color: "#111" },
-              { label: "Potential payout", value: payout > 0 ? `$${payout.toFixed(2)}` : "—", color: "#111" },
+              { label: "Order Value", value: orderValue > 0 ? `${orderValue.toFixed(2)} USDH` : "—", color: "#111" },
+              { label: "Potential payout", value: `${payout.toFixed(2)} USDH`, color: "#111" },
+              { label: "Fees", value: "0.0700% / 0.0400%", color: "#6b7280" },
             ].map(({ label, value, color }) => (
               <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
                 <span style={{ color: "#9ca3af" }}>{label}</span>
                 <span style={{ color, fontWeight: 500 }}>{value}</span>
               </div>
             ))}
-            {/* "If you win" profit row */}
-            {side === "buy" && payout > 0 && (
+            {side === "buy" && profit > 0 && (
               <div style={{
                 display: "flex", justifyContent: "space-between",
-                background: "#f0fdf4", borderRadius: 6, padding: "8px 10px", marginTop: 2,
+                background: "#f0fdf4", borderRadius: 6, padding: "8px 10px",
               }}>
                 <span style={{ fontSize: 12, color: "#374151", fontWeight: 600 }}>If you win</span>
-                <span style={{ fontSize: 13, color: "#16a34a", fontWeight: 700 }}>
-                  +${profit.toFixed(2)} profit
-                </span>
+                <span style={{ fontSize: 13, color: "#16a34a", fontWeight: 700 }}>+${profit.toFixed(2)} profit</span>
               </div>
             )}
           </div>
