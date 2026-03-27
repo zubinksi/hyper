@@ -83,6 +83,33 @@ export async function fetchOutcomeBalance(address: string, coinId: string): Prom
 }
 
 /**
+ * Fetch a spot token balance from HyperCore (spotClearinghouseState).
+ * Works for outcome tokens (#N / @N) and any other spot asset.
+ */
+export async function fetchSpotBalance(address: string, coinId: string): Promise<number> {
+  try {
+    const res = await fetch(HL_TESTNET_INFO, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "spotClearinghouseState", user: address }),
+    });
+    const data = await res.json() as { balances?: { coin: string; total: string }[] };
+    // Outcome tokens appear as either "#N" or "@N" — match both
+    const alt = coinId.startsWith("#")
+      ? "@" + coinId.slice(1)
+      : coinId.startsWith("@")
+      ? "#" + coinId.slice(1)
+      : null;
+    const entry = data.balances?.find(
+      (b) => b.coin === coinId || (alt !== null && b.coin === alt)
+    );
+    return entry ? parseFloat(entry.total) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
  * Fetch ERC-1155 balances for many outcome tokens in one call (balanceOfBatch).
  * Returns a map of coinId → human-readable balance.
  */

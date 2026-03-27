@@ -74,39 +74,35 @@ const AGENT_TYPES = {
   ],
 };
 
-export interface OrderParams {
-  /** Raw EIP-1193 provider (window.ethereum or WalletConnect EthereumProvider) */
-  walletProvider: object;
-  /** The already-connected wallet address — avoids eth_requestAccounts round-trip */
-  signerAddress: string;
-  /** Index in spotMeta.universe for the token being traded */
-  spotIndex: number;
-  isBuy: boolean;
-  /** Current mid/mark price of the token */
-  price: number;
-  /** Number of tokens to trade */
-  size: number;
+export interface BookAnalysis {
+  spreadPct: number | null;
+  /** Average fill price as a fraction (0–1), null if book is empty */
+  avgPrice: number | null;
+  /** Shares you'd receive for the given USD amount */
+  estimatedShares: number | null;
+  /** Total USD available on the relevant book side */
+  availableLiquidityUsd: number;
+  /** True when the order can only be partially filled by available liquidity */
+  isPartialFill: boolean;
 }
-
-export interface OrderResult {
-  success: boolean;
-  message: string;
-  txHash?: string;
-  data?: unknown;
-}
-
-const HL_TESTNET_INFO = "https://api.hyperliquid-testnet.xyz/info";
 
 /**
- * Estimate slippage by walking the L2 order book.
- * Returns percentage slippage (positive = worse than mid), or null if unavailable.
+ * Walk the L2 order book to estimate fill quality for a given USD spend amount.
+ * Returns spread, avg fill price, estimated shares, and whether a partial fill is expected.
  */
-export async function estimateSlippage(
+export async function analyzeOrderBook(
   coinId: string,
   isBuy: boolean,
-  size: number
-): Promise<number | null> {
-  if (size <= 0) return null;
+  usdAmount: number
+): Promise<BookAnalysis> {
+  const empty: BookAnalysis = {
+    spreadPct: null,
+    avgPrice: null,
+    estimatedShares: null,
+    availableLiquidityUsd: 0,
+    isPartialFill: false,
+  };
+  if (usdAmount <= 0) return empty;
   try {
     const res = await fetch(HL_TESTNET_INFO, {
       method: "POST",
@@ -118,34 +114,77 @@ export async function estimateSlippage(
     };
     const bids = book.levels?.[0] ?? [];
     const asks = book.levels?.[1] ?? [];
-    if (!bids.length || !asks.length) return null;
+    if (!bids.length || !asks.length) return empty;
 
-    const midPrice = (parseFloat(bids[0].px) + parseFloat(asks[0].px)) / 2;
-    if (midPrice <= 0) return null;
+    const bestBid = parseFloat(bids[0].px);
+    const bestAsk = parseFloat(asks[0].px);
+    const mid = (bestBid + bestAsk) / 2;
+    const spreadPct = mid > 0 ? ((bestAsk - bestBid) / mid) * 100 : null;
 
     const levels = isBuy ? asks : bids;
-    let remaining = size;
+
+    // Total available liquidity on this side
+    let availableLiquidityUsd = 0;
+    for (const lvl of levels) {
+      availableLiquidityUsd += parseFloat(lvl.px) * parseFloat(lvl.sz);
+    }
+
+    // Walk levels to fill usdAmount
+    let remaining = usdAmount;
+    let totalShares = 0;
     let totalCost = 0;
     for (const lvl of levels) {
       if (remaining <= 0) break;
       const px = parseFloat(lvl.px);
       const sz = parseFloat(lvl.sz);
-      const filled = Math.min(remaining, sz);
-      totalCost += filled * px;
-      remaining -= filled;
-    }
-    if (remaining > 0 && levels.length > 0) {
-      totalCost += remaining * parseFloat(levels[levels.length - 1].px);
+      const levelCost = px * sz;
+      if (remaining >= levelCost) {
+        totalShares += sz;
+        totalCost += levelCost;
+        remaining -= levelCost;
+      } else {
+        totalShares += remaining / px;
+        totalCost += remaining;
+        remaining = 0;
+      }
     }
 
-    const avgPx = totalCost / size;
-    return isBuy
-      ? ((avgPx - midPrice) / midPrice) * 100
-      : ((midPrice - avgPx) / midPrice) * 100;
+    const isPartialFill = remaining > 0.001;
+    const avgPrice = totalShares > 0 ? totalCost / totalShares : null;
+
+    return { spreadPct, avgPrice, estimatedShares: totalShares || null, availableLiquidityUsd, isPartialFill };
   } catch {
-    return null;
+    return empty;
   }
 }
+
+export interface OrderParams {
+  /** Raw EIP-1193 provider (window.ethereum or WalletConnect EthereumProvider) */
+  walletProvider: object;
+  /** The already-connected wallet address */
+  signerAddress: string;
+  /** Index in spotMeta.universe for the token being traded */
+  spotIndex: number;
+  isBuy: boolean;
+  /** Current mid/mark price (used for IOC ceiling; ignored for limit orders) */
+  price: number;
+  /** Number of tokens to trade */
+  size: number;
+  /** "market" = IOC with slippage ceiling (default); "limit" = GTC at exact limitPrice */
+  orderType?: "market" | "limit";
+  /** Required when orderType === "limit" */
+  limitPrice?: number;
+}
+
+export interface OrderResult {
+  success: boolean;
+  message: string;
+  txHash?: string;
+  data?: unknown;
+}
+
+const HL_TESTNET_INFO = "https://api.hyperliquid-testnet.xyz/info";
+
 
 export async function signAndSubmitOrder({
   walletProvider,
@@ -154,41 +193,42 @@ export async function signAndSubmitOrder({
   isBuy,
   price,
   size,
+  orderType = "market",
+  limitPrice,
 }: OrderParams): Promise<OrderResult> {
-  if (spotIndex < 0) {
-    return { success: false, message: "Token not found in spot universe" };
-  }
-  if (size <= 0) {
-    return { success: false, message: "Size must be greater than zero" };
-  }
+  if (spotIndex < 0) return { success: false, message: "Token not found in spot universe" };
+  if (size <= 0) return { success: false, message: "Size must be greater than zero" };
 
-  // Typed data JSON for eth_signTypedData_v4 — constructed once, reused per attempt
+  const isLimit = orderType === "limit" && limitPrice !== undefined && limitPrice > 0;
+  const tif = isLimit ? "Gtc" : "Ioc";
+
+  // For market orders: 10% slippage ceiling; capped to outcome token 0–1 USDH range.
+  // For limit orders: use the exact user-specified price.
+  const execPx = isLimit
+    ? limitPrice!
+    : isBuy
+    ? Math.min(price * 1.10, 0.9999)
+    : Math.max(price * 0.90, 0.0001);
+
   const eip712Payload = {
     types: {
       EIP712Domain: [
-        { name: "name",             type: "string"  },
-        { name: "version",          type: "string"  },
-        { name: "chainId",          type: "uint256" },
-        { name: "verifyingContract",type: "address" },
+        { name: "name",              type: "string"  },
+        { name: "version",           type: "string"  },
+        { name: "chainId",           type: "uint256" },
+        { name: "verifyingContract", type: "address" },
       ],
       Agent: AGENT_TYPES.Agent,
     },
     primaryType: "Agent",
     domain: AGENT_DOMAIN,
-    // message filled per-attempt below
   };
 
   try {
     const assetId = SPOT_ASSET_BASE + spotIndex;
-
-    // 10% slippage ceiling for IOC — wide enough to sweep through spreads.
-    // Outcome tokens are 0–1 USDH: cap buys at 0.9999, floor sells at 0.0001.
-    const SLIPPAGE = 0.10;
-    const limitPx = isBuy
-      ? Math.min(price * (1 + SLIPPAGE), 0.9999)
-      : Math.max(price * (1 - SLIPPAGE), 0.0001);
-
-    const MAX_RETRIES = 3;
+    // Limit orders rest on the book — no retries needed.
+    // Market IOC orders retry up to 3× to fill partial liquidity.
+    const MAX_RETRIES = isLimit ? 1 : 3;
     let remaining = size;
     let totalFilledSz = 0;
     let weightedPxSum = 0;
@@ -198,55 +238,53 @@ export async function signAndSubmitOrder({
     for (let attempt = 0; attempt < MAX_RETRIES && remaining > 0.000001; attempt++) {
       const nonce = Date.now();
 
-      // Keys must match Python SDK insertion order for identical msgpack bytes
       const orderWire = {
         a: assetId,
         b: isBuy,
-        p: floatToWire(limitPx),
+        p: floatToWire(execPx),
         s: floatToWire(remaining),
         r: false,
-        t: { limit: { tif: "Ioc" } },
+        t: { limit: { tif } },
       };
-
-      const action = {
-        type: "order",
-        orders: [orderWire],
-        grouping: "na",
-      };
+      const action = { type: "order", orders: [orderWire], grouping: "na" };
 
       const hashBytes = computeActionHash(action, null, nonce);
       const connectionId = zeroPadValue(hexlify(hashBytes), 32);
 
-      // Call eth_signTypedData_v4 directly on the raw EIP-1193 provider —
-      // bypasses ethers BrowserProvider/getSigner which triggers extra RPC
-      // calls (eth_requestAccounts, network detection) that can hang.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const sigHex: string = await (walletProvider as any).request({
-        method: "eth_signTypedData_v4",
-        params: [
-          signerAddress,
-          JSON.stringify({ ...eip712Payload, message: { source: "b", connectionId } }),
-        ],
-      });
+      console.log("[Hyper] Requesting wallet signature (attempt", attempt + 1, ")…");
 
-      // 65-byte signature: 0x + r(32) + s(32) + v(1)
+      // Race the wallet request against a 90-second timeout so the UI never
+      // hangs forever. If your wallet popup isn't appearing, check the browser
+      // extension — MetaMask sometimes queues requests behind a locked screen.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const sigHex: string = await Promise.race<string>([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (walletProvider as any).request({
+          method: "eth_signTypedData_v4",
+          params: [
+            signerAddress,
+            JSON.stringify({ ...eip712Payload, message: { source: "b", connectionId } }),
+          ],
+        }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Wallet signing timed out — check your wallet extension")),
+            90_000
+          )
+        ),
+      ]);
+
+      console.log("[Hyper] Signature received, submitting order…");
+
       const r = sigHex.slice(0, 66);
       const s = "0x" + sigHex.slice(66, 130);
       const v = parseInt(sigHex.slice(130, 132), 16);
 
-      const payload = {
-        action,
-        nonce,
-        signature: { r, s, v },
-        vaultAddress: null,
-      };
-
       const res = await fetch(HL_TESTNET_EXCHANGE, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ action, nonce, signature: { r, s, v }, vaultAddress: null }),
       });
-
       const json = await res.json();
 
       if (json.status !== "ok") {
@@ -259,22 +297,22 @@ export async function signAndSubmitOrder({
       const first = statuses[0] as Record<string, unknown> | undefined;
       const filled = first?.filled as Record<string, unknown> | undefined;
       const statusError = typeof first?.error === "string" ? first.error : undefined;
+      const resting = first?.resting as Record<string, unknown> | undefined;
 
-      if (statusError) {
-        lastError = statusError;
-        break;
+      if (statusError) { lastError = statusError; break; }
+
+      if (isLimit && resting) {
+        return { success: true, message: "Limit order placed — resting on book", data: json };
       }
 
       if (filled) {
-        // filled.totalSz is in shares (tokens), not dollars
-        const filledSz = parseFloat(filled.totalSz as string);
-        const fillAvgPx = parseFloat(filled.avgPx as string);
+        const filledSz  = parseFloat(filled.totalSz as string);
+        const fillAvgPx = parseFloat(filled.avgPx   as string);
         if (filledSz > 0) {
           totalFilledSz += filledSz;
           weightedPxSum += filledSz * fillAvgPx;
           remaining -= filledSz;
 
-          // Fetch tx hash from the exchange on first fill
           if (!txHash) {
             try {
               const fillsRes = await fetch(HL_TESTNET_INFO, {
@@ -294,10 +332,9 @@ export async function signAndSubmitOrder({
             } catch { /* ignore */ }
           }
         } else {
-          break; // zero fill, stop retrying
+          break;
         }
       } else {
-        // IOC not matched — no liquidity at this price
         lastError = lastError ?? "Order was not filled (insufficient liquidity at this price)";
         break;
       }
