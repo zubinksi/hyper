@@ -16,6 +16,12 @@ body {
   font-family: "Anonymous Pro", monospace;
 }
 
+/* Side padding applied on all screen sizes, wider on desktop */
+.page-content {
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
 /* Desktop: 10% larger font + wider side padding */
 @media (min-width: 769px) {
   html {

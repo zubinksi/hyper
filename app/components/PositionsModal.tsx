@@ -133,7 +133,7 @@ export default function PositionsModal() {
           background: address ? "#E8F5EE" : "#0E184D",
           color: address ? "#629F82" : "#fff",
           border: address ? "1px solid #629F82" : "none",
-          borderRadius: 8,
+          borderRadius: 0,
           padding: "7px 14px",
           fontSize: 13,
           fontWeight: 600,
@@ -144,10 +144,7 @@ export default function PositionsModal() {
           gap: 6,
         }}
       >
-        {address && (
-          <span style={{ width: 7, height: 7, borderRadius: "2px", background: "#629F82", display: "inline-block" }} />
-        )}
-        {buttonLabel}
+          {buttonLabel}
       </button>
 
       {/* Modal */}

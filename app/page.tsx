@@ -319,7 +319,7 @@ export default function Page() {
       <header
         className="page-content"
         style={{
-          borderBottom: "3px solid #0E184D",
+          borderBottom: "12px solid #0E184D",
           paddingTop: 0,
           paddingBottom: 0,
           display: "flex",
