@@ -66,11 +66,22 @@ async function fetchPositions(addr: string): Promise<PositionRow[]> {
 }
 
 export default function PositionsModal() {
-  const { address } = useWallet();
+  const { address, connect, disconnect, connecting, error } = useWallet();
   const [open, setOpen] = useState(false);
   const [positions, setPositions] = useState<PositionRow[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // Eager fetch when address changes so count is ready on button
+  useEffect(() => {
+    if (!address) { setPositions([]); return; }
+    setLoading(true);
+    fetchPositions(address)
+      .then(setPositions)
+      .catch(() => setPositions([]))
+      .finally(() => setLoading(false));
+  }, [address]);
+
+  // Refetch when modal opens
   useEffect(() => {
     if (!open || !address) return;
     setLoading(true);
@@ -78,9 +89,27 @@ export default function PositionsModal() {
       .then(setPositions)
       .catch(() => setPositions([]))
       .finally(() => setLoading(false));
-  }, [open, address]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
-  if (!address) return null;
+  const handleButtonClick = () => {
+    if (address) {
+      setOpen(true);
+    } else if (!connecting) {
+      connect();
+    }
+  };
+
+  const handleDisconnect = () => {
+    disconnect();
+    setOpen(false);
+  };
+
+  const buttonLabel = connecting
+    ? "Connecting…"
+    : address
+    ? `${positions.length} Position${positions.length !== 1 ? "s" : ""} →`
+    : "Connect Wallet";
 
   const fmtP = (v: number) => (v < 0.01 ? v.toFixed(6) : v.toFixed(4));
   const fmtPnl = (pnl: number | null, roe: number | null) => {
@@ -92,22 +121,33 @@ export default function PositionsModal() {
 
   return (
     <>
-      {/* Trigger button */}
+      {error && (
+        <span style={{ fontSize: 11, color: "#F48484", maxWidth: 200, textAlign: "right" }}>
+          {error}
+        </span>
+      )}
       <button
-        onClick={() => setOpen(true)}
+        onClick={handleButtonClick}
+        disabled={connecting}
         style={{
-          background: "transparent",
-          border: "1px solid #0E184D",
+          background: address ? "#E8F5EE" : "#0E184D",
+          color: address ? "#629F82" : "#fff",
+          border: address ? "1px solid #629F82" : "none",
           borderRadius: 8,
           padding: "7px 14px",
           fontSize: 13,
           fontWeight: 600,
-          cursor: "pointer",
-          color: "#0E184D",
+          cursor: connecting ? "default" : "pointer",
           fontFamily: "inherit",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
         }}
       >
-        Positions
+        {address && (
+          <span style={{ width: 7, height: 7, borderRadius: "2px", background: "#629F82", display: "inline-block" }} />
+        )}
+        {buttonLabel}
       </button>
 
       {/* Modal */}
@@ -143,15 +183,32 @@ export default function PositionsModal() {
             {/* Header row */}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <span style={{ fontWeight: 700, fontSize: 15, color: "#0E184D" }}>Positions</span>
-              <button
-                onClick={() => setOpen(false)}
-                style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  fontSize: 18, color: "#9ca3af", fontFamily: "inherit", lineHeight: 1,
-                }}
-              >
-                ✕
-              </button>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button
+                  onClick={handleDisconnect}
+                  style={{
+                    background: "none",
+                    border: "1px solid #F48484",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    fontSize: 12,
+                    color: "#F48484",
+                    fontFamily: "inherit",
+                    padding: "4px 10px",
+                  }}
+                >
+                  Disconnect
+                </button>
+                <button
+                  onClick={() => setOpen(false)}
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    fontSize: 18, color: "#9ca3af", fontFamily: "inherit", lineHeight: 1,
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {/* Column headers */}

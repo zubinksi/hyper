@@ -71,6 +71,38 @@ body {
   overflow-x: auto;
 }
 
+/* Hero section: stacked on mobile, two columns on desktop */
+.hero-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.hero-left {
+  display: none;
+}
+
+@media (min-width: 769px) {
+  .hero-section {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 32px;
+  }
+
+  .hero-left {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    flex: 0 0 200px;
+    min-width: 180px;
+    padding-top: 16px;
+  }
+
+  .hero-section > .chart-card {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
 /* Market detail page layout */
 .market-layout {
   flex-direction: column;

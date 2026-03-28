@@ -4,7 +4,6 @@ import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useWallet } from "./lib/wallet-context";
 import { Stepper, useAutoPlay } from "pasito";
 import "pasito/styles.css";
 import type { LivelinePoint, LivelineSeries, OrderbookData } from "liveline";
@@ -70,10 +69,6 @@ function OutcomeDots({ options, isBinary }: { options: OutcomeOption[]; isBinary
 
 export default function Page() {
   const router = useRouter();
-  const wallet = useWallet();
-  const shortAddr = wallet.address
-    ? `${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`
-    : null;
   const [now, setNow] = useState(() => new Date());
   const [markets, setMarkets] = useState<Market[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -322,59 +317,44 @@ export default function Page() {
     >
       {/* Header */}
       <header
+        className="page-content"
         style={{
-          borderBottom: "1px solid #f3f4f6",
-          padding: "0 16px",
+          borderBottom: "3px solid #0E184D",
+          paddingTop: 0,
+          paddingBottom: 0,
           display: "flex",
           alignItems: "center",
-          justifyContent: "flex-end",
+          justifyContent: "space-between",
           height: 52,
           flexShrink: 0,
           gap: 10,
         }}
       >
+        <span style={{ fontWeight: 700, fontSize: 18, color: "#0E184D", letterSpacing: "-0.01em" }}>
+          Odds + Ends
+        </span>
         <PositionsModal />
-        {wallet.error && (
-          <span style={{ fontSize: 11, color: "#F48484", maxWidth: 200, textAlign: "right" }}>
-            {wallet.error}
-          </span>
-        )}
-        <button
-          onClick={wallet.address ? wallet.disconnect : wallet.connect}
-          disabled={wallet.connecting}
-          style={{
-            background: wallet.address ? "#E8F5EE" : "#0E184D",
-            color: wallet.address ? "#629F82" : "#fff",
-            border: wallet.address ? "1px solid #629F82" : "none",
-            borderRadius: 8,
-            padding: "7px 14px",
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: wallet.connecting ? "default" : "pointer",
-            fontFamily: "inherit",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          {wallet.connecting ? (
-            "Connecting…"
-          ) : wallet.address ? (
-            <>
-              <span style={{ width: 7, height: 7, borderRadius: "2px", background: "#629F82", display: "inline-block" }} />
-              {shortAddr}
-            </>
-          ) : (
-            "Connect Wallet"
-          )}
-        </button>
       </header>
 
       {/* Content */}
       <div className="page-content" style={{ padding: "12px 24px", flex: 1 }}>
 
-      {/* Width-constrained column */}
-      <div className="chart-card" style={{ display: "flex", flexDirection: "column" }}>
+      {/* Hero section — two columns on desktop */}
+      <div className="hero-section">
+
+        {/* Left hero copy — desktop only */}
+        <div className="hero-left">
+          <span style={{ fontWeight: 800, fontSize: "2rem", color: "#0E184D", lineHeight: 1.1, display: "block" }}>
+            Outcome Markets
+          </span>
+          <span style={{ fontWeight: 400, fontSize: "1rem", color: "#0E184D", opacity: 0.55, display: "block", marginTop: 8 }}>
+            Built on Hyperliquid
+          </span>
+        </div>
+
+        {/* Right column: chart card */}
+        {/* Width-constrained column */}
+        <div className="chart-card" style={{ display: "flex", flexDirection: "column" }}>
 
         {/* Bordered chart card — entire card is clickable */}
         <div
@@ -495,10 +475,18 @@ export default function Page() {
             />
           </div>
         )}
+        </div> {/* end chart-card */}
+      </div> {/* end hero-section */}
+
+      {/* All Markets heading */}
+      <div style={{ marginTop: 24, marginBottom: 8, display: "flex", alignItems: "center" }}>
+        <span style={{ fontWeight: 700, fontSize: "11px", color: "#0E184D", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+          All Markets
+        </span>
       </div>
 
       {/* Markets list */}
-      <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ marginTop: 0, display: "flex", flexDirection: "column", gap: 8 }}>
         {markets.map((m) => (
           <Link
             key={m.coinId}
