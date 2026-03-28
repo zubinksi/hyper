@@ -37,6 +37,14 @@ export async function postInfo<T>(body: object, url = HL_TESTNET_INFO): Promise<
   return res.json();
 }
 
+export function fmtTime(d: Date): string {
+  const h = d.getHours();
+  const hh = (h % 12 || 12).toString();
+  const mm = d.getMinutes().toString().padStart(2, "0");
+  const ss = d.getSeconds().toString().padStart(2, "0");
+  return `${hh}:${mm}:${ss} ${h >= 12 ? "PM" : "AM"}`;
+}
+
 export function fmtChartValue(v: number): string {
   if (v >= 10000) return `$${Math.round(v).toLocaleString("en-US")}`;
   if (v >= 1) return `$${v.toFixed(2)}`;

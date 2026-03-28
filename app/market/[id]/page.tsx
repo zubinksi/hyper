@@ -11,10 +11,13 @@ import {
   fmtChartValue,
   fmtPct,
   fmtVolume,
+  fmtTime,
   MULTI_COLORS,
   HL_TESTNET_WS,
 } from "../../lib/markets";
 import type { Market, HLCandle, OutcomeOption } from "../../lib/markets";
+import BrailleIcon, { getBrailleType } from "../../components/BrailleIcon";
+import PositionsModal from "../../components/PositionsModal";
 import { signAndSubmitOrder, analyzeOrderBook } from "../../lib/hyperliquid-sign";
 import type { BookAnalysis } from "../../lib/hyperliquid-sign";
 import { fetchUsdhBalance, fetchSpotBalance } from "../../lib/evm";
@@ -734,6 +737,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
   const { id } = use(params);
   const coinId = `#${id}`;
 
+  const [now, setNow]               = useState(() => new Date());
   const [markets, setMarkets]       = useState<Market[]>([]);
   const [spotIndexMap, setSpotIndexMap] = useState<Record<string, number>>({});
   const [szDecimalsMap, setSzDecimalsMap] = useState<Record<string, number>>({});
@@ -780,6 +784,12 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
   }, []);
 
   const market = markets.find((m) => m.coinId === coinId);
+
+  // Clock
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Fetch chart data when market is found
   useEffect(() => {
@@ -984,12 +994,14 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
           ← Markets
         </Link>
 
-        {/* Wallet button */}
-        {wallet.error && (
-          <span style={{ fontSize: 11, color: "#F48484", maxWidth: 200, textAlign: "right" }}>
-            {wallet.error}
-          </span>
-        )}
+        {/* Wallet + positions */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <PositionsModal />
+          {wallet.error && (
+            <span style={{ fontSize: 11, color: "#F48484", maxWidth: 200, textAlign: "right" }}>
+              {wallet.error}
+            </span>
+          )}
         <button
           onClick={wallet.address ? wallet.disconnect : wallet.connect}
           disabled={wallet.connecting}
@@ -1027,6 +1039,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
             "Connect Wallet"
           )}
         </button>
+        </div>
       </header>
 
       {/* ── Market title + outcomes ── */}
@@ -1043,8 +1056,12 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
             fontSize: "15.6px",
             color: "#0E184D",
             marginBottom: 8,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
           }}
         >
+          {market && <BrailleIcon type={getBrailleType(market)} />}
           {market?.question ?? "Loading…"}
         </div>
         {market && (
@@ -1113,7 +1130,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
             )}
           </div>
 
-          {/* Vol + time windows */}
+          {/* Vol + clock + time windows */}
           <div
             style={{
               display: "flex",
@@ -1126,6 +1143,9 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
           >
             <span style={{ fontSize: "11px", color: "#9ca3af" }}>
               Vol {market ? fmtVolume(market.volume) : "—"}
+            </span>
+            <span style={{ fontSize: "11px", color: "#9ca3af", letterSpacing: "0.04em" }}>
+              {fmtTime(now)}
             </span>
             <div style={{ display: "flex", gap: 2 }}>
               {(market?.isRecurring ? WINDOWS_RECURRING : WINDOWS_STANDARD).map((w) => (
@@ -1152,16 +1172,6 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
 
           {/* Market description */}
           {market && <MarketDetails description={market.description} />}
-
-          {/* Outcome rows — not shown for moneyline binary (non-Yes/No) */}
-          {market && (!market.isBinary || market.options[0]?.name.toLowerCase() === "yes") && (
-            <OutcomeRows
-              market={market}
-              selectedOutcomeIdx={tradeOutcomeIdx}
-              selectedSide={tradeYesNo}
-              onSelect={handleOutcomeSelect}
-            />
-          )}
         </div>
 
         {/* Trading panel column */}

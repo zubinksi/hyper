@@ -16,6 +16,18 @@ body {
   font-family: "Anonymous Pro", monospace;
 }
 
+/* Desktop: 10% larger font + wider side padding */
+@media (min-width: 769px) {
+  html {
+    font-size: 17.6px; /* 16 × 1.1 */
+  }
+
+  .page-content {
+    padding-left: 26px !important;
+    padding-right: 26px !important;
+  }
+}
+
 /* Pasito stepper: transparent bg/border, 2× dot & active-width.
    Double-class selector beats the single .pasito-container rule. */
 .pasito-container.pasito-theme {

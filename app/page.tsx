@@ -14,10 +14,13 @@ import {
   fmtChartValue,
   fmtPct,
   fmtVolume,
+  fmtTime,
   MULTI_COLORS,
   HL_TESTNET_WS,
 } from "./lib/markets";
 import type { Market, HLCandle, OutcomeOption } from "./lib/markets";
+import BrailleIcon, { getBrailleType } from "./components/BrailleIcon";
+import PositionsModal from "./components/PositionsModal";
 
 const Liveline = dynamic(
   () => import("liveline").then((m) => ({ default: m.Liveline })),
@@ -64,19 +67,6 @@ function OutcomeDots({ options, isBinary }: { options: OutcomeOption[]; isBinary
   );
 }
 
-function fmtDateTime(d: Date): string {
-  const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const MONTHS = [
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
-  ];
-  const h = d.getHours();
-  const ampm = h >= 12 ? "PM" : "AM";
-  const hh = (h % 12 || 12).toString();
-  const mm = d.getMinutes().toString().padStart(2, "0");
-  const ss = d.getSeconds().toString().padStart(2, "0");
-  return `${DAYS[d.getDay()]} ${MONTHS[d.getMonth()]} ${d.getDate()} ${hh}:${mm}:${ss}${ampm}`;
-}
 
 export default function Page() {
   const router = useRouter();
@@ -343,6 +333,7 @@ export default function Page() {
           gap: 10,
         }}
       >
+        <PositionsModal />
         {wallet.error && (
           <span style={{ fontSize: 11, color: "#F48484", maxWidth: 200, textAlign: "right" }}>
             {wallet.error}
@@ -380,14 +371,7 @@ export default function Page() {
       </header>
 
       {/* Content */}
-      <div style={{ padding: "12px 24px", flex: 1 }}>
-
-      {/* Clock */}
-      <div style={{ flexShrink: 0, marginBottom: 10 }}>
-        <div style={{ fontWeight: "normal", fontSize: "13px", letterSpacing: "0.04em", color: "#111" }}>
-          {fmtDateTime(now)}
-        </div>
-      </div>
+      <div className="page-content" style={{ padding: "12px 24px", flex: 1 }}>
 
       {/* Width-constrained column */}
       <div className="chart-card" style={{ display: "flex", flexDirection: "column" }}>
@@ -417,13 +401,8 @@ export default function Page() {
                 padding: "14px 16px 10px",
               }}
             >
-              <span
-                style={{
-                  fontWeight: "bold",
-                  fontSize: "15.6px",
-                  color: "#0E184D",
-                }}
-              >
+              <span style={{ fontWeight: "bold", fontSize: "15.6px", color: "#0E184D", display: "flex", alignItems: "center", gap: 6 }}>
+                <BrailleIcon type={getBrailleType(selectedMarket)} />
                 {selectedMarket.question}
               </span>
               {/* Single-line outcome dots — overflow hidden clips any that don't fit */}
@@ -465,7 +444,7 @@ export default function Page() {
           </div>
         </div>
 
-        {/* Vol / time-windows row */}
+        {/* Vol / clock / time-windows row */}
         <div
           style={{
             display: "flex",
@@ -476,6 +455,9 @@ export default function Page() {
         >
           <span style={{ fontSize: "11px", color: "#9ca3af" }}>
             Vol {selectedMarket ? fmtVolume(selectedMarket.volume) : "—"}
+          </span>
+          <span style={{ fontSize: "11px", color: "#9ca3af", letterSpacing: "0.04em" }}>
+            {fmtTime(now)}
           </span>
           <div style={{ display: "flex", gap: 2 }}>
             {(selectedMarket?.isRecurring ? WINDOWS_RECURRING : WINDOWS_STANDARD).map((w) => (
@@ -535,7 +517,8 @@ export default function Page() {
             }}
           >
             {/* Question */}
-            <span style={{ fontWeight: 600, fontSize: "13px", color: "#0E184D" }}>
+            <span style={{ fontWeight: 600, fontSize: "13px", color: "#0E184D", display: "flex", alignItems: "center", gap: 6 }}>
+              <BrailleIcon type={getBrailleType(m)} />
               {m.question}
             </span>
             {/* First two outcomes */}
