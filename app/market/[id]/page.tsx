@@ -954,9 +954,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
   const accentColor = yesPrice < 0.5 ? "#F48484" : "#629F82";
 
   // Truncate address for display
-  const shortAddr = wallet.address
-    ? `${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`
-    : null;
+
 
   return (
     <div
@@ -970,13 +968,14 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
     >
       {/* ── Site header ── */}
       <header
+        className="page-content"
         style={{
-          borderBottom: "1px solid #f3f4f6",
-          padding: "0 16px",
+          borderBottom: "12px solid #0E184D",
+          paddingTop: 10,
+          paddingBottom: 10,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          height: 52,
           flexShrink: 0,
         }}
       >
@@ -994,52 +993,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
           ← Markets
         </Link>
 
-        {/* Wallet + positions */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <PositionsModal />
-          {wallet.error && (
-            <span style={{ fontSize: 11, color: "#F48484", maxWidth: 200, textAlign: "right" }}>
-              {wallet.error}
-            </span>
-          )}
-        <button
-          onClick={wallet.address ? wallet.disconnect : wallet.connect}
-          disabled={wallet.connecting}
-          style={{
-            background: wallet.address ? "#E8F5EE" : "#0E184D",
-            color: wallet.address ? "#629F82" : "#fff",
-            border: wallet.address ? "1px solid #bbf7d0" : "none",
-            borderRadius: 8,
-            padding: "7px 14px",
-            fontSize: 13,
-            fontWeight: 600,
-            cursor: wallet.connecting ? "default" : "pointer",
-            fontFamily: "inherit",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          {wallet.connecting ? (
-            "Connecting…"
-          ) : wallet.address ? (
-            <>
-              <span
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: "50%",
-                  background: "#629F82",
-                  display: "inline-block",
-                }}
-              />
-              {shortAddr}
-            </>
-          ) : (
-            "Connect Wallet"
-          )}
-        </button>
-        </div>
+        <PositionsModal />
       </header>
 
       {/* ── Market title + outcomes ── */}
