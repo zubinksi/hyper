@@ -320,18 +320,17 @@ export default function Page() {
         className="page-content"
         style={{
           borderBottom: "12px solid #0E184D",
-          paddingTop: 0,
-          paddingBottom: 0,
+          paddingTop: 10,
+          paddingBottom: 10,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          height: 52,
           flexShrink: 0,
           gap: 10,
         }}
       >
         <span style={{ fontWeight: 700, fontSize: 18, color: "#0E184D", letterSpacing: "-0.01em" }}>
-          Odds + Ends
+          ODDS + ENDS
         </span>
         <PositionsModal />
       </header>
