@@ -1,7 +1,7 @@
 export const HL_TESTNET_INFO = "https://api.hyperliquid-testnet.xyz/info";
 export const HL_TESTNET_WS = "wss://api.hyperliquid-testnet.xyz/ws";
 
-export const MULTI_COLORS = ["#3b82f6", "#f97316", "#8b5cf6", "#10b981", "#f59e0b", "#ec4899"];
+export const MULTI_COLORS = ["#7188FF", "#FFB26A", "#BC89FF", "#629F82", "#f59e0b", "#ec4899"];
 
 export interface OutcomeOption {
   name: string;

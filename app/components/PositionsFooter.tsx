@@ -127,7 +127,7 @@ export default function PositionsFooter() {
         bottom: 0,
         left: 0,
         right: 0,
-        background: "#fff",
+        background: "#F0E9D7",
         borderTop: "1px solid #e5e7eb",
         zIndex: 50,
         fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif",
@@ -216,7 +216,7 @@ export default function PositionsFooter() {
                   fontSize: 12,
                   fontWeight: 500,
                   alignSelf: "center",
-                  color: pos.pnl === null ? "#9ca3af" : pos.pnl >= 0 ? "#16a34a" : "#dc2626",
+                  color: pos.pnl === null ? "#9ca3af" : pos.pnl >= 0 ? "#629F82" : "#F48484",
                 }}
               >
                 {fmtPnl(pos.pnl, pos.roe)}

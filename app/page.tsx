@@ -37,7 +37,7 @@ const WINDOWS_RECURRING = [
 
 function OutcomeDots({ options, isBinary }: { options: OutcomeOption[]; isBinary: boolean }) {
   const isYesNo = isBinary && options[0]?.name.toLowerCase() === "yes";
-  const colors = isYesNo ? ["#16a34a", "#dc2626"] : MULTI_COLORS;
+  const colors = isYesNo ? ["#629F82", "#F48484"] : MULTI_COLORS;
   return (
     <>
       {options.map((opt, i) => (
@@ -49,7 +49,7 @@ function OutcomeDots({ options, isBinary }: { options: OutcomeOption[]; isBinary
             style={{
               width: 7,
               height: 7,
-              borderRadius: "50%",
+              borderRadius: "2px",
               backgroundColor: colors[i % colors.length],
               display: "inline-block",
               flexShrink: 0,
@@ -318,7 +318,7 @@ export default function Page() {
 
   const selectedMarket = markets.find((m) => m.coinId === selectedCoin);
   const yesPrice    = selectedMarket?.isBinary ? selectedMarket.options[0].price : 0;
-  const accentColor = yesPrice < 0.5 ? "#dc2626" : "#16a34a";
+  const accentColor = yesPrice < 0.5 ? "#F48484" : "#629F82";
 
   return (
     <div
@@ -326,7 +326,7 @@ export default function Page() {
         display: "flex",
         flexDirection: "column",
         minHeight: "100vh",
-        backgroundColor: "#ffffff",
+        backgroundColor: "#F0E9D7",
         boxSizing: "border-box",
       }}
     >
@@ -344,7 +344,7 @@ export default function Page() {
         }}
       >
         {wallet.error && (
-          <span style={{ fontSize: 11, color: "#dc2626", maxWidth: 200, textAlign: "right" }}>
+          <span style={{ fontSize: 11, color: "#F48484", maxWidth: 200, textAlign: "right" }}>
             {wallet.error}
           </span>
         )}
@@ -352,9 +352,9 @@ export default function Page() {
           onClick={wallet.address ? wallet.disconnect : wallet.connect}
           disabled={wallet.connecting}
           style={{
-            background: wallet.address ? "#f0fdf4" : "#111",
-            color: wallet.address ? "#16a34a" : "#fff",
-            border: wallet.address ? "1px solid #bbf7d0" : "none",
+            background: wallet.address ? "#E8F5EE" : "#0E184D",
+            color: wallet.address ? "#629F82" : "#fff",
+            border: wallet.address ? "1px solid #629F82" : "none",
             borderRadius: 8,
             padding: "7px 14px",
             fontSize: 13,
@@ -370,7 +370,7 @@ export default function Page() {
             "Connecting…"
           ) : wallet.address ? (
             <>
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#16a34a", display: "inline-block" }} />
+              <span style={{ width: 7, height: 7, borderRadius: "2px", background: "#629F82", display: "inline-block" }} />
               {shortAddr}
             </>
           ) : (
@@ -380,7 +380,7 @@ export default function Page() {
       </header>
 
       {/* Content */}
-      <div style={{ padding: "12px", flex: 1 }}>
+      <div style={{ padding: "12px 24px", flex: 1 }}>
 
       {/* Clock */}
       <div style={{ flexShrink: 0, marginBottom: 10 }}>
@@ -402,6 +402,7 @@ export default function Page() {
             display: "flex",
             flexDirection: "column",
             cursor: selectedMarket ? "pointer" : "default",
+            boxShadow: "rgba(0, 0, 0, 0.12) 0px 1px 3px, rgba(0, 0, 0, 0.24) 0px 1px 2px",
           }}
         >
           {/* Market header */}
@@ -420,7 +421,7 @@ export default function Page() {
                 style={{
                   fontWeight: "bold",
                   fontSize: "15.6px",
-                  color: "#111",
+                  color: "#0E184D",
                 }}
               >
                 {selectedMarket.question}
@@ -530,10 +531,11 @@ export default function Page() {
               borderRadius: 10,
               gap: 6,
               cursor: "pointer",
+              boxShadow: "rgba(0, 0, 0, 0.12) 0px 1px 3px, rgba(0, 0, 0, 0.24) 0px 1px 2px",
             }}
           >
             {/* Question */}
-            <span style={{ fontWeight: 600, fontSize: "13px", color: "#111" }}>
+            <span style={{ fontWeight: 600, fontSize: "13px", color: "#0E184D" }}>
               {m.question}
             </span>
             {/* First two outcomes */}

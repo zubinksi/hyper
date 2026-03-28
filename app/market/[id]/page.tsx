@@ -40,7 +40,7 @@ const WINDOWS_RECURRING = [
 
 function OutcomeDots({ options, isBinary }: { options: OutcomeOption[]; isBinary: boolean }) {
   const isYesNo = isBinary && options[0]?.name.toLowerCase() === "yes";
-  const colors = isYesNo ? ["#16a34a", "#dc2626"] : MULTI_COLORS;
+  const colors = isYesNo ? ["#629F82", "#F48484"] : MULTI_COLORS;
   return (
     <>
       {options.map((opt, i) => (
@@ -52,7 +52,7 @@ function OutcomeDots({ options, isBinary }: { options: OutcomeOption[]; isBinary
             style={{
               width: 7,
               height: 7,
-              borderRadius: "50%",
+              borderRadius: "2px",
               backgroundColor: colors[i % colors.length],
               display: "inline-block",
               flexShrink: 0,
@@ -209,16 +209,16 @@ function TradingPanel({
     }
   }
 
-  const buyColor  = "#16a34a";
-  const sellColor = "#dc2626";
+  const buyColor  = "#629F82";
+  const sellColor = "#F48484";
   const activeColor = side === "buy" ? buyColor : sellColor;
 
   // Green-border pill style (from reference image)
   const pillBtn = (active: boolean): React.CSSProperties => ({
     flex: 1, padding: "9px 8px", borderRadius: 10,
     border: active ? `1.5px solid ${buyColor}` : "1px solid #e5e7eb",
-    background: active ? "#f0fdf4" : "#fff",
-    color: active ? "#15803d" : "#374151",
+    background: active ? "#E8F5EE" : "#fff",
+    color: active ? "#629F82" : "#374151",
     fontWeight: 600, cursor: "pointer", fontSize: 13,
     whiteSpace: "nowrap" as const, fontFamily: "inherit",
   });
@@ -227,11 +227,11 @@ function TradingPanel({
   const showPartialFill = orderType === "market" && bookAnalysis?.isPartialFill === true;
 
   const statusColors: Record<TradeStatus, string> = {
-    idle: "#111", pending: "#6b7280", success: "#16a34a", error: "#dc2626",
+    idle: "#0E184D", pending: "#6b7280", success: "#629F82", error: "#F48484",
   };
 
   return (
-    <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden", background: "#fff" }}>
+    <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, overflow: "hidden", background: "#F0E9D7" }}>
 
       {/* Buy / Sell tabs + Market/Limit dropdown on right */}
       <div style={{ display: "flex", alignItems: "stretch", borderBottom: "1px solid #f3f4f6", position: "relative" }}>
@@ -268,16 +268,16 @@ function TradingPanel({
           {showDropdown && (
             <div style={{
               position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 50,
-              background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8,
+              background: "#F0E9D7", border: "1px solid #e5e7eb", borderRadius: 8,
               boxShadow: "0 4px 12px rgba(0,0,0,0.1)", minWidth: 110, overflow: "hidden",
             }}>
               {(["market", "limit"] as const).map((t) => (
                 <button key={t} onClick={() => { setOrderType(t); setShowDropdown(false); }} style={{
                   display: "block", width: "100%", textAlign: "left",
-                  padding: "10px 14px", background: orderType === t ? "#f0fdf4" : "#fff",
+                  padding: "10px 14px", background: orderType === t ? "#E8F5EE" : "#fff",
                   border: "none", cursor: "pointer", fontSize: 13,
                   fontWeight: orderType === t ? 700 : 400,
-                  color: orderType === t ? "#15803d" : "#374151",
+                  color: orderType === t ? "#629F82" : "#374151",
                   fontFamily: "inherit",
                 }}>
                   {t.charAt(0).toUpperCase() + t.slice(1)}
@@ -327,8 +327,8 @@ function TradingPanel({
             ...pillBtn(selectedSide === "no"),
             ...(selectedSide === "no" ? {
               border: `1.5px solid ${sellColor}`,
-              background: "#fef2f2",
-              color: "#b91c1c",
+              background: "#FDF0F0",
+              color: "#D06060",
             } : {}),
           }}>
             {side === "buy" ? "Buy" : "Sell"} {market.isBinary ? market.options[1].name : "No"}
@@ -350,7 +350,7 @@ function TradingPanel({
                 width: "100%", boxSizing: "border-box",
                 border: "1px solid #e5e7eb", borderRadius: 8,
                 padding: "10px 12px", fontSize: 14, fontFamily: "inherit",
-                color: "#111", background: "#f9fafb", outline: "none",
+                color: "#0E184D", background: "#f9fafb", outline: "none",
               }}
             />
           </div>
@@ -379,7 +379,7 @@ function TradingPanel({
                 Max
               </button>
             )}
-            <span style={{ color: "#111", fontWeight: 500 }}>
+            <span style={{ color: "#0E184D", fontWeight: 500 }}>
               {side === "buy"
                 ? usdhBalance !== null ? `${usdhBalance.toFixed(2)} USDH` : walletAddress ? "— USDH" : "0 USDH"
                 : tokenBalance !== null ? `${tokenBalance.toFixed(4).replace(/\.?0+$/, "")} ${tradingName}` : walletAddress ? `— ${tradingName}` : `0 ${tradingName}`}
@@ -402,7 +402,7 @@ function TradingPanel({
               onChange={(e) => setSharesInput(e.target.value)}
               style={{
                 background: "transparent", border: "none", outline: "none",
-                color: "#111", fontSize: 15, fontWeight: 500,
+                color: "#0E184D", fontSize: 15, fontWeight: 500,
                 textAlign: "right", width: "80px", fontFamily: "inherit",
               }}
             />
@@ -423,7 +423,7 @@ function TradingPanel({
               {showSizeDropdown && (
                 <div style={{
                   position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 60,
-                  background: "#fff", border: "1px solid #e5e7eb", borderRadius: 8,
+                  background: "#F0E9D7", border: "1px solid #e5e7eb", borderRadius: 8,
                   boxShadow: "0 4px 12px rgba(0,0,0,0.1)", minWidth: 90, overflow: "hidden",
                 }}>
                   {(["shares", "usdh"] as const).map((unit) => (
@@ -432,10 +432,10 @@ function TradingPanel({
                       onClick={() => { setSizeUnit(unit); setSharesInput(""); setShowSizeDropdown(false); }}
                       style={{
                         display: "block", width: "100%", textAlign: "left",
-                        padding: "10px 14px", background: sizeUnit === unit ? "#f0fdf4" : "#fff",
+                        padding: "10px 14px", background: sizeUnit === unit ? "#E8F5EE" : "#fff",
                         border: "none", cursor: "pointer", fontSize: 13,
                         fontWeight: sizeUnit === unit ? 700 : 400,
-                        color: sizeUnit === unit ? "#15803d" : "#374151",
+                        color: sizeUnit === unit ? "#629F82" : "#374151",
                         fontFamily: "inherit",
                       }}
                     >
@@ -487,8 +487,8 @@ function TradingPanel({
           style={{
             width: "100%", padding: "13px", borderRadius: 8, border: "none",
             background: tradeStatus === "pending" ? "#e5e7eb"
-              : tradeStatus === "success" ? "#16a34a"
-              : tradeStatus === "error"   ? "#dc2626"
+              : tradeStatus === "success" ? "#629F82"
+              : tradeStatus === "error"   ? "#F48484"
               : !walletAddress            ? "#374151"
               : activeColor,
             color: tradeStatus === "pending" ? "#6b7280" : "#fff",
@@ -522,8 +522,8 @@ function TradingPanel({
         {shares > 0 && (
           <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #f3f4f6", display: "flex", flexDirection: "column", gap: 9 }}>
             {[
-              { label: "Order Value", value: orderValue > 0 ? `${orderValue.toFixed(2)} USDH` : "—", color: "#111" },
-              { label: "Potential payout", value: `${payout.toFixed(2)} USDH`, color: "#111" },
+              { label: "Order Value", value: orderValue > 0 ? `${orderValue.toFixed(2)} USDH` : "—", color: "#0E184D" },
+              { label: "Potential payout", value: `${payout.toFixed(2)} USDH`, color: "#0E184D" },
               { label: "Fees", value: "0.0700% / 0.0400%", color: "#6b7280" },
             ].map(({ label, value, color }) => (
               <div key={label} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
@@ -534,10 +534,10 @@ function TradingPanel({
             {side === "buy" && profit > 0 && (
               <div style={{
                 display: "flex", justifyContent: "space-between",
-                background: "#f0fdf4", borderRadius: 6, padding: "8px 10px",
+                background: "#E8F5EE", borderRadius: 6, padding: "8px 10px",
               }}>
                 <span style={{ fontSize: 12, color: "#374151", fontWeight: 600 }}>If you win</span>
-                <span style={{ fontSize: 13, color: "#16a34a", fontWeight: 700 }}>+${profit.toFixed(2)} profit</span>
+                <span style={{ fontSize: 13, color: "#629F82", fontWeight: 700 }}>+${profit.toFixed(2)} profit</span>
               </div>
             )}
           </div>
@@ -657,7 +657,7 @@ function OutcomeRows({
               style={{
                 fontWeight: 600,
                 fontSize: 13,
-                color: "#111",
+                color: "#0E184D",
                 flex: 1,
                 minWidth: 0,
                 overflow: "hidden",
@@ -673,7 +673,7 @@ function OutcomeRows({
               style={{
                 fontWeight: 700,
                 fontSize: 15,
-                color: "#111",
+                color: "#0E184D",
                 flexShrink: 0,
                 minWidth: 44,
                 textAlign: "right",
@@ -688,9 +688,9 @@ function OutcomeRows({
               style={{
                 padding: "7px 12px",
                 borderRadius: 8,
-                border: `1px solid ${yesActive ? "#16a34a" : "#bbf7d0"}`,
-                background: yesActive ? "#16a34a" : "#f0fdf4",
-                color: yesActive ? "#fff" : "#16a34a",
+                border: `1px solid ${yesActive ? "#629F82" : "#a8d5bc"}`,
+                background: yesActive ? "#629F82" : "#E8F5EE",
+                color: yesActive ? "#fff" : "#629F82",
                 fontWeight: 600,
                 fontSize: 13,
                 cursor: "pointer",
@@ -708,9 +708,9 @@ function OutcomeRows({
               style={{
                 padding: "7px 12px",
                 borderRadius: 8,
-                border: `1px solid ${noActive ? "#dc2626" : "#fecaca"}`,
-                background: noActive ? "#dc2626" : "#fef2f2",
-                color: noActive ? "#fff" : "#dc2626",
+                border: `1px solid ${noActive ? "#F48484" : "#f9c4c4"}`,
+                background: noActive ? "#F48484" : "#FDF0F0",
+                color: noActive ? "#fff" : "#F48484",
                 fontWeight: 600,
                 fontSize: 13,
                 cursor: "pointer",
@@ -941,7 +941,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
   }, [market?.coinId]);
 
   const yesPrice    = market?.isBinary ? market.options[0].price : 0;
-  const accentColor = yesPrice < 0.5 ? "#dc2626" : "#16a34a";
+  const accentColor = yesPrice < 0.5 ? "#F48484" : "#629F82";
 
   // Truncate address for display
   const shortAddr = wallet.address
@@ -952,7 +952,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
     <div
       style={{
         minHeight: "100vh",
-        backgroundColor: "#ffffff",
+        backgroundColor: "#F0E9D7",
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
@@ -986,7 +986,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
 
         {/* Wallet button */}
         {wallet.error && (
-          <span style={{ fontSize: 11, color: "#dc2626", maxWidth: 200, textAlign: "right" }}>
+          <span style={{ fontSize: 11, color: "#F48484", maxWidth: 200, textAlign: "right" }}>
             {wallet.error}
           </span>
         )}
@@ -994,8 +994,8 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
           onClick={wallet.address ? wallet.disconnect : wallet.connect}
           disabled={wallet.connecting}
           style={{
-            background: wallet.address ? "#f0fdf4" : "#111",
-            color: wallet.address ? "#16a34a" : "#fff",
+            background: wallet.address ? "#E8F5EE" : "#0E184D",
+            color: wallet.address ? "#629F82" : "#fff",
             border: wallet.address ? "1px solid #bbf7d0" : "none",
             borderRadius: 8,
             padding: "7px 14px",
@@ -1017,7 +1017,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
                   width: 7,
                   height: 7,
                   borderRadius: "50%",
-                  background: "#16a34a",
+                  background: "#629F82",
                   display: "inline-block",
                 }}
               />
@@ -1041,7 +1041,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
           style={{
             fontWeight: 700,
             fontSize: "15.6px",
-            color: "#111",
+            color: "#0E184D",
             marginBottom: 8,
           }}
         >
@@ -1140,7 +1140,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
                     cursor: "pointer",
                     fontFamily: "system-ui, -apple-system, sans-serif",
                     backgroundColor: currentWindow === w.secs ? "rgba(0,0,0,0.07)" : "transparent",
-                    color: currentWindow === w.secs ? "#111" : "#6b7280",
+                    color: currentWindow === w.secs ? "#0E184D" : "#6b7280",
                     fontWeight: currentWindow === w.secs ? 600 : 400,
                   }}
                 >
