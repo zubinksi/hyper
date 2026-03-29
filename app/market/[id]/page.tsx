@@ -970,6 +970,7 @@ export default function MarketPage({ params }: { params: Promise<{ id: string }>
       <header
         className="page-content"
         style={{
+          background: "#0E184D",
           borderBottom: "12px solid #0E184D",
           paddingTop: 10,
           paddingBottom: 10,

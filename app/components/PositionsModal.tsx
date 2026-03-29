@@ -92,6 +92,8 @@ export default function PositionsModal() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  const [btnHover, setBtnHover] = useState(false);
+
   const handleButtonClick = () => {
     if (address) {
       setOpen(true);
@@ -128,11 +130,13 @@ export default function PositionsModal() {
       )}
       <button
         onClick={handleButtonClick}
+        onMouseEnter={() => setBtnHover(true)}
+        onMouseLeave={() => setBtnHover(false)}
         disabled={connecting}
         style={{
-          background: address ? "#E8F5EE" : "#0E184D",
-          color: address ? "#629F82" : "#fff",
-          border: address ? "1px solid #629F82" : "none",
+          background: btnHover ? "rgba(113,136,255,0.5)" : "rgba(113,136,255,0.25)",
+          color: "#fff",
+          border: "1px solid #7188FF",
           borderRadius: 0,
           padding: "7px 14px",
           fontSize: 13,

@@ -319,6 +319,7 @@ export default function Page() {
       <header
         className="page-content"
         style={{
+          background: "#0E184D",
           borderBottom: "12px solid #0E184D",
           paddingTop: 10,
           paddingBottom: 10,
@@ -329,7 +330,7 @@ export default function Page() {
           gap: 10,
         }}
       >
-        <span style={{ fontWeight: 700, fontSize: 18, color: "#0E184D", letterSpacing: "-0.01em" }}>
+        <span style={{ fontWeight: 700, fontSize: 18, color: "#fff", letterSpacing: "-0.01em" }}>
           ODDS + ENDS
         </span>
         <PositionsModal />
